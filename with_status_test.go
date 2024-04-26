@@ -9,17 +9,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWithStats(t *testing.T) {
+func TestWithStatus(t *testing.T) {
 
-	t.Run("with stats", func(t *testing.T) {
-		stats := NewStats()
+	t.Run("with status", func(t *testing.T) {
+		store := NewStatusStore()
 
 		started := make(chan struct{})
 		r := New(func(ctx context.Context) error {
 			started <- struct{}{}
 			time.Sleep(500 * time.Millisecond)
 			return nil
-		}, WithStats("test", stats))
+		}, WithStatus("test", store))
 
 		go func() {
 			err := r.Run(context.Background())
@@ -28,33 +28,33 @@ func TestWithStats(t *testing.T) {
 
 		<-started
 
-		s := stats.Get()
-		assert.Equal(t, true, s.Runnable["test"].Running)
+		s := store.Get()
+		assert.Equal(t, true, s["test"].Running)
 
 		err := r.Stop(context.Background())
 		require.NoError(t, err)
 
-		s = stats.Get()
-		assert.Equal(t, false, s.Runnable["test"].Running)
+		s = store.Get()
+		assert.Equal(t, false, s["test"].Running)
 	})
 
-	t.Run("with stats, error", func(t *testing.T) {
-		stats := NewStats()
+	t.Run("with status, error", func(t *testing.T) {
+		store := NewStatusStore()
 
 		r := New(func(ctx context.Context) error {
 			return assert.AnError
-		}, WithStats("test", stats))
+		}, WithStatus("test", store))
 
 		err := r.Run(context.Background())
 		require.Error(t, err)
 
-		s := stats.Get()
-		assert.Equal(t, false, s.Runnable["test"].Running)
-		assert.Equal(t, assert.AnError, s.Runnable["test"].LastError)
+		s := store.Get()
+		assert.Equal(t, false, s["test"].Running)
+		assert.Equal(t, assert.AnError, s["test"].LastError)
 	})
 
-	t.Run("with stats, restart", func(t *testing.T) {
-		stats := NewStats()
+	t.Run("with status, restart", func(t *testing.T) {
+		store := NewStatusStore()
 
 		counter := 0
 		r := New(func(ctx context.Context) error {
@@ -63,13 +63,13 @@ func TestWithStats(t *testing.T) {
 				return assert.AnError
 			}
 			return nil
-		}, WithStats("test", stats), WithRetry(3, ResetNever))
+		}, WithStatus("test", store), WithRetry(3, ResetNever))
 
 		err := r.Run(context.Background())
 		require.NoError(t, err)
 
-		s := stats.Get()
-		assert.Equal(t, false, s.Runnable["test"].Running)
-		assert.Equal(t, 1, s.Runnable["test"].Restarts)
+		s := store.Get()
+		assert.Equal(t, false, s["test"].Running)
+		assert.Equal(t, 1, s["test"].Restarts)
 	})
 }

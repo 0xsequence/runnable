@@ -6,11 +6,9 @@ import (
 	"time"
 )
 
-type StatsView struct {
-	Runnable map[string]RunnableStatsView `json:"runnable"`
-}
+type StatusMap map[string]Status
 
-type RunnableStatsView struct {
+type Status struct {
 	Running   bool       `json:"running"`
 	Restarts  int        `json:"restarts"`
 	StartTime time.Time  `json:"start_time"`
@@ -18,7 +16,7 @@ type RunnableStatsView struct {
 	LastError error      `json:"last_error"`
 }
 
-type Stats struct {
+type StatusStore struct {
 	running   map[string]bool
 	restarts  map[string]int
 	startTime map[string]time.Time
@@ -28,8 +26,8 @@ type Stats struct {
 	mu sync.Mutex
 }
 
-func NewStats() *Stats {
-	return &Stats{
+func NewStatusStore() *StatusStore {
+	return &StatusStore{
 		running:   make(map[string]bool),
 		restarts:  make(map[string]int),
 		startTime: make(map[string]time.Time),
@@ -38,80 +36,79 @@ func NewStats() *Stats {
 	}
 }
 
-func (s *Stats) Get() StatsView {
+func (s *StatusStore) Get() StatusMap {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	svs := StatsView{Runnable: map[string]RunnableStatsView{}}
-
+	sm := StatusMap{}
 	for id, running := range s.running {
-		sv := RunnableStatsView{
+		st := Status{
 			Running: running,
 		}
 
 		if restarts, ok := s.restarts[id]; ok {
-			sv.Restarts = restarts
+			st.Restarts = restarts
 		}
 
 		if startTime, ok := s.startTime[id]; ok {
-			sv.StartTime = startTime
+			st.StartTime = startTime
 		}
 
 		if endTime, ok := s.endTime[id]; ok {
 			et := endTime
-			sv.EndTime = &et
+			st.EndTime = &et
 		}
 
 		if lastError, ok := s.lastError[id]; ok {
-			sv.LastError = lastError
+			st.LastError = lastError
 		}
 
-		svs.Runnable[id] = sv
+		sm[id] = st
 	}
 
-	return svs
+	return sm
 }
 
-type withStats struct {
-	id    string
-	stats *Stats
+type withStatus struct {
+	runnableID string
+	store      *StatusStore
 }
 
-func (w *withStats) apply(r *runnable) {
+func (w *withStatus) apply(r *runnable) {
 	runFuncRunnable := r.runFunc
 	onStartRunnable := r.onStart
 	onStopRunnable := r.onStop
 
 	r.runFunc = func(ctx context.Context) error {
 		defer func() {
-			w.stats.mu.Lock()
-			w.stats.running[w.id] = false
-			w.stats.endTime[w.id] = time.Now()
-			w.stats.mu.Unlock()
+			w.store.mu.Lock()
+			w.store.running[w.runnableID] = false
+			w.store.endTime[w.runnableID] = time.Now()
+			w.store.mu.Unlock()
 		}()
 
 		err := runFuncRunnable(ctx)
 		if err != nil {
-			w.stats.mu.Lock()
-			w.stats.lastError[w.id] = err
-			w.stats.mu.Unlock()
+			w.store.mu.Lock()
+			w.store.lastError[w.runnableID] = err
+			w.store.mu.Unlock()
 			return err
 		}
 		return nil
 	}
 
 	r.onStart = func() {
-		w.stats.mu.Lock()
+		w.store.mu.Lock()
 
-		w.stats.running[w.id] = true
-		w.stats.startTime[w.id] = time.Now()
-		if _, ok := w.stats.restarts[w.id]; !ok {
-			w.stats.restarts[w.id] = 0
+		w.store.running[w.runnableID] = true
+		w.store.startTime[w.runnableID] = time.Now()
+		if _, ok := w.store.restarts[w.runnableID]; !ok {
+			w.store.restarts[w.runnableID] = 0
 		} else {
-			w.stats.restarts[w.id]++
+			w.store.restarts[w.runnableID]++
 		}
 
-		w.stats.mu.Unlock()
+		w.store.mu.Unlock()
 
 		if onStartRunnable != nil {
 			onStartRunnable()
@@ -119,10 +116,10 @@ func (w *withStats) apply(r *runnable) {
 	}
 
 	r.onStop = func() {
-		w.stats.mu.Lock()
-		w.stats.running[w.id] = false
-		w.stats.endTime[w.id] = time.Now()
-		w.stats.mu.Unlock()
+		w.store.mu.Lock()
+		w.store.running[w.runnableID] = false
+		w.store.endTime[w.runnableID] = time.Now()
+		w.store.mu.Unlock()
 
 		if onStopRunnable != nil {
 			onStopRunnable()
@@ -130,9 +127,9 @@ func (w *withStats) apply(r *runnable) {
 	}
 }
 
-func WithStats(id string, stats *Stats) Option {
-	return &withStats{
-		id:    id,
-		stats: stats,
+func WithStatus(id string, store *StatusStore) Option {
+	return &withStatus{
+		runnableID: id,
+		store:      store,
 	}
 }
