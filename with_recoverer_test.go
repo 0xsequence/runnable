@@ -30,8 +30,72 @@ func TestWithRecoverer(t *testing.T) {
 		r := New(fn, WithRecoverer("datasync", &reporter))
 
 		err := r.Run(context.Background())
-		require.NoError(t, err)
+		require.Error(t, err)
 		assert.Equal(t, 1, counter)
 		assert.Equal(t, []string{"datasync - something went wrong"}, reporter.logs)
+	})
+
+	t.Run("panics as errors", func(t *testing.T) {
+		started, stopped := make(chan struct{}), make(chan struct{})
+		reporter := &InMemoryReporter{}
+
+		r := New(func(ctx context.Context) error {
+			started <- struct{}{}
+			panic("something went wrong")
+			return nil
+		}, WithRecoverer("test", reporter))
+
+		go func() {
+			err := r.Run(context.Background())
+			require.Error(t, err)
+			stopped <- struct{}{}
+		}()
+
+		<-started
+		<-stopped
+	})
+
+	t.Run("panics as errors, no panic", func(t *testing.T) {
+		reporter := &InMemoryReporter{}
+		started, stopped := make(chan struct{}), make(chan struct{})
+
+		r := New(func(ctx context.Context) error {
+			started <- struct{}{}
+			return nil
+		}, WithRecoverer("blabla", reporter))
+
+		go func() {
+			err := r.Run(context.Background())
+			require.NoError(t, err)
+			stopped <- struct{}{}
+		}()
+
+		<-started
+		<-stopped
+	})
+
+	t.Run("panics as errors, with stats", func(t *testing.T) {
+		reporter := &InMemoryReporter{}
+		started, stopped := make(chan struct{}), make(chan struct{})
+
+		store := NewStatusStore()
+		r := New(func(ctx context.Context) error {
+			started <- struct{}{}
+			panic("something went wrong")
+			return nil
+		}, WithRecoverer("test", reporter), WithStatus("test", store))
+
+		go func() {
+			err := r.Run(context.Background())
+			require.Error(t, err)
+			stopped <- struct{}{}
+		}()
+
+		<-started
+		<-stopped
+
+		s := store.Get()
+		require.Equal(t, false, s["test"].Running)
+		require.Error(t, s["test"].LastError)
 	})
 }

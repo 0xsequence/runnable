@@ -2,6 +2,7 @@ package runnable
 
 import (
 	"context"
+	"fmt"
 )
 
 type RecoveryReporter interface {
@@ -30,15 +31,21 @@ func (rec *recoverer) apply(r *runnable) {
 	runFunc := r.runFunc
 	r.runFunc = func(ctx context.Context) error {
 		var err error
-		err = func() error {
+		innerRun := func(ctx context.Context) error {
 			defer func() {
-				if err := recover(); err != nil {
-					rec.reporter.Report(ctx, rec.runnableId, err)
+				if recovery := recover(); recovery != nil {
+					err = fmt.Errorf("panic: %v", recovery)
+					rec.reporter.Report(ctx, rec.runnableId, recovery)
 				}
 			}()
 
 			return runFunc(ctx)
-		}()
+		}
+
+		errDirect := innerRun(ctx)
+		if errDirect != nil {
+			return errDirect
+		}
 
 		return err
 	}
