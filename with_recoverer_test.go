@@ -13,8 +13,8 @@ type InMemoryReporter struct {
 	logs []string
 }
 
-func (i *InMemoryReporter) Report(ctx context.Context, runnableId string, rec interface{}) {
-	i.logs = append(i.logs, fmt.Sprintf("%s - %s", runnableId, rec.(string)))
+func (i *InMemoryReporter) Report(ctx context.Context, rec interface{}) {
+	i.logs = append(i.logs, fmt.Sprintf("%s", rec.(string)))
 }
 
 func TestWithRecoverer(t *testing.T) {
@@ -27,12 +27,12 @@ func TestWithRecoverer(t *testing.T) {
 			panic("something went wrong")
 			return nil
 		}
-		r := New(fn, WithRecoverer("datasync", &reporter))
+		r := New(fn, WithRecoverer(&reporter))
 
 		err := r.Run(context.Background())
 		require.Error(t, err)
 		assert.Equal(t, 1, counter)
-		assert.Equal(t, []string{"datasync - something went wrong"}, reporter.logs)
+		assert.Equal(t, []string{"something went wrong"}, reporter.logs)
 	})
 
 	t.Run("panics as errors", func(t *testing.T) {
@@ -43,7 +43,7 @@ func TestWithRecoverer(t *testing.T) {
 			started <- struct{}{}
 			panic("something went wrong")
 			return nil
-		}, WithRecoverer("test", reporter))
+		}, WithRecoverer(reporter))
 
 		go func() {
 			err := r.Run(context.Background())
@@ -62,7 +62,7 @@ func TestWithRecoverer(t *testing.T) {
 		r := New(func(ctx context.Context) error {
 			started <- struct{}{}
 			return nil
-		}, WithRecoverer("blabla", reporter))
+		}, WithRecoverer(reporter))
 
 		go func() {
 			err := r.Run(context.Background())
@@ -83,7 +83,7 @@ func TestWithRecoverer(t *testing.T) {
 			started <- struct{}{}
 			panic("something went wrong")
 			return nil
-		}, WithRecoverer("test", reporter), WithStatus("test", store))
+		}, WithRecoverer(reporter), WithStatus("test", store))
 
 		go func() {
 			err := r.Run(context.Background())

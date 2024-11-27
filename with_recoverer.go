@@ -6,24 +6,22 @@ import (
 )
 
 type RecoveryReporter interface {
-	Report(ctx context.Context, runnableId string, rec interface{})
+	Report(ctx context.Context, rec interface{})
 }
 
 // NoopReporter
 // Used to continue running go routine  and do nothing
 type NoopReporter struct{}
 
-func (*NoopReporter) Report(ctx context.Context, runnableId string, rec interface{}) {}
+func (*NoopReporter) Report(ctx context.Context, rec interface{}) {}
 
 type recoverer struct {
-	runnableId string
-	reporter   RecoveryReporter
+	reporter RecoveryReporter
 }
 
-func WithRecoverer(runnableId string, reporter RecoveryReporter) Option {
+func WithRecoverer(reporter RecoveryReporter) Option {
 	return &recoverer{
-		runnableId: runnableId,
-		reporter:   reporter,
+		reporter: reporter,
 	}
 }
 
@@ -35,7 +33,7 @@ func (rec *recoverer) apply(r *runnable) {
 			defer func() {
 				if recovery := recover(); recovery != nil {
 					err = fmt.Errorf("panic: %v", recovery)
-					rec.reporter.Report(ctx, rec.runnableId, recovery)
+					rec.reporter.Report(ctx, recovery)
 				}
 			}()
 
