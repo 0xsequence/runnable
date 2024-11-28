@@ -33,7 +33,10 @@ func (rec *recoverer) apply(r *runnable) {
 			defer func() {
 				if recovery := recover(); recovery != nil {
 					err = fmt.Errorf("panic: %v", recovery)
-					rec.reporter.Report(ctx, recovery)
+
+					if rec.reporter != nil {
+						rec.reporter.Report(ctx, recovery)
+					}
 				}
 			}()
 
