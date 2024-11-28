@@ -26,7 +26,7 @@ func WithRecoverer(reporter RecoveryReporter) Option {
 }
 
 func (rec *recoverer) apply(r *runnable) {
-	runFunc := r.runFunc
+	originalRunFunc := r.runFunc
 	r.runFunc = func(ctx context.Context) error {
 		var err error
 		innerRun := func(ctx context.Context) error {
@@ -40,12 +40,11 @@ func (rec *recoverer) apply(r *runnable) {
 				}
 			}()
 
-			return runFunc(ctx)
+			return originalRunFunc(ctx)
 		}
 
-		errDirect := innerRun(ctx)
-		if errDirect != nil {
-			return errDirect
+		if errInner := innerRun(ctx); errInner != nil {
+			return errInner
 		}
 
 		return err
