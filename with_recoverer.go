@@ -3,10 +3,15 @@ package runnable
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 )
 
 type RecoveryReporter interface {
 	Report(ctx context.Context, rec interface{})
+}
+
+type StackPrinter interface {
+	Print(ctx context.Context, callstack []byte)
 }
 
 // NoopReporter
@@ -16,12 +21,14 @@ type NoopReporter struct{}
 func (*NoopReporter) Report(ctx context.Context, rec interface{}) {}
 
 type recoverer struct {
-	reporter RecoveryReporter
+	reporter     RecoveryReporter
+	stackPrinter StackPrinter
 }
 
-func WithRecoverer(reporter RecoveryReporter) Option {
+func WithRecoverer(reporter RecoveryReporter, stackPrinter StackPrinter) Option {
 	return &recoverer{
-		reporter: reporter,
+		reporter:     reporter,
+		stackPrinter: stackPrinter,
 	}
 }
 
@@ -33,6 +40,10 @@ func (rec *recoverer) apply(r *runnable) {
 			defer func() {
 				if recovery := recover(); recovery != nil {
 					err = fmt.Errorf("panic: %v", recovery)
+
+					if rec.stackPrinter != nil {
+						rec.stackPrinter.Print(ctx, debug.Stack())
+					}
 
 					if rec.reporter != nil {
 						rec.reporter.Report(ctx, recovery)

@@ -27,7 +27,7 @@ func TestWithRecoverer(t *testing.T) {
 			panic("something went wrong")
 			return nil
 		}
-		r := New(fn, WithRecoverer(&reporter))
+		r := New(fn, WithRecoverer(&reporter, nil))
 
 		err := r.Run(context.Background())
 		require.Error(t, err)
@@ -43,7 +43,7 @@ func TestWithRecoverer(t *testing.T) {
 			started <- struct{}{}
 			panic("something went wrong")
 			return nil
-		}, WithRecoverer(reporter))
+		}, WithRecoverer(reporter, nil))
 
 		go func() {
 			err := r.Run(context.Background())
@@ -62,7 +62,7 @@ func TestWithRecoverer(t *testing.T) {
 		r := New(func(ctx context.Context) error {
 			started <- struct{}{}
 			return nil
-		}, WithRecoverer(reporter))
+		}, WithRecoverer(reporter, nil))
 
 		go func() {
 			err := r.Run(context.Background())
@@ -83,7 +83,7 @@ func TestWithRecoverer(t *testing.T) {
 			started <- struct{}{}
 			panic("something went wrong")
 			return nil
-		}, WithRecoverer(reporter), WithStatus("test", store))
+		}, WithRecoverer(reporter, nil), WithStatus("test", store))
 
 		go func() {
 			err := r.Run(context.Background())
