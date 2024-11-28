@@ -104,5 +104,4 @@ func TestRunnable(t *testing.T) {
 		require.Error(t, err, context.DeadlineExceeded)
 		assert.Equal(t, true, r.IsRunning())
 	})
-
 }
