@@ -3,6 +3,7 @@ package runnable
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -128,6 +129,46 @@ func TestWithDrain(t *testing.T) {
 			require.True(t, errors.Is(err, context.Canceled))
 		case <-time.After(time.Second):
 			t.Fatal("runFunc did not exit on outer ctx cancel")
+		}
+		assert.False(t, r.IsRunning())
+	})
+
+	t.Run("Stop is concurrency-safe", func(t *testing.T) {
+		started := make(chan struct{})
+
+		r := New(func(ctx context.Context) error {
+			close(started)
+			<-Stopping(ctx)
+			return nil
+		}, WithDrain(1*time.Second))
+
+		go func() {
+			_ = r.Run(context.Background())
+		}()
+
+		<-started
+
+		const callers = 10
+		var wg sync.WaitGroup
+		errs := make([]error, callers)
+		for i := 0; i < callers; i++ {
+			i := i
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				errs[i] = r.Stop(context.Background())
+			}()
+		}
+		wg.Wait()
+
+		// No double-close panic is the load-bearing assertion. Each
+		// Stop must return either nil (drove or waited on the drain)
+		// or ErrNotRunning (Run already exited before this caller
+		// grabbed the lock).
+		for _, err := range errs {
+			if err != nil {
+				require.ErrorIs(t, err, ErrNotRunning)
+			}
 		}
 		assert.False(t, r.IsRunning())
 	})

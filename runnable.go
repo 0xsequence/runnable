@@ -146,9 +146,10 @@ func (r *runnable) Stop(ctx context.Context) error {
 	drainEnabled := r.drainEnabled
 	drainTimeout := r.drainTimeout
 	stoppingChan := r.stoppingChan
+	r.stoppingChan = nil // first-caller wins; subsequent concurrent Stops see nil
 	r.mu.Unlock()
 
-	if drainEnabled {
+	if drainEnabled && stoppingChan != nil {
 		close(stoppingChan)
 		drainCtx, drainCancel := context.WithTimeout(ctx, drainTimeout)
 		select {
