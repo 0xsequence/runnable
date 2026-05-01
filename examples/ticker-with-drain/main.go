@@ -40,8 +40,8 @@ func reconcile(ctx context.Context) error {
 }
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
+	sigCtx, stopSig := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stopSig()
 
 	rc := runnable.NewTicker(
 		2*time.Second,
@@ -50,12 +50,16 @@ func main() {
 		runnable.WithRecoverer(stderrReporter{}, stderrPrinter{}),
 	)
 
+	// Run with a pristine ctx — if Run received sigCtx, SIGTERM would
+	// cancel runFunc's ctx directly and the ticker would exit before
+	// Stop ever closed Stopping(ctx), defeating WithDrain. Stop is the
+	// only thing that should drive shutdown of a drain-enabled worker.
 	runErr := make(chan error, 1)
 	go func() {
-		runErr <- rc.Run(ctx)
+		runErr <- rc.Run(context.Background())
 	}()
 
-	<-ctx.Done()
+	<-sigCtx.Done()
 	fmt.Println("shutdown: draining in-flight tick...")
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
