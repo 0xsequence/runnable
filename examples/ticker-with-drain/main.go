@@ -26,7 +26,7 @@ func (stderrReporter) Report(ctx context.Context, rec interface{}) {
 type stderrPrinter struct{}
 
 func (stderrPrinter) Print(ctx context.Context, callstack []byte) {
-	os.Stderr.Write(callstack)
+	_, _ = os.Stderr.Write(callstack)
 }
 
 func reconcile(ctx context.Context) error {

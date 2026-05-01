@@ -14,7 +14,7 @@ type InMemoryReporter struct {
 }
 
 func (i *InMemoryReporter) Report(ctx context.Context, rec interface{}) {
-	i.logs = append(i.logs, fmt.Sprintf("%s", rec.(string)))
+	i.logs = append(i.logs, fmt.Sprintf("%v", rec))
 }
 
 func TestWithRecoverer(t *testing.T) {
