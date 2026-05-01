@@ -17,6 +17,12 @@ import (
 // external calls survive shutdown under WithDrain, tick should derive
 // per-call timeouts via context.WithoutCancel(ctx) so its work is not
 // affected by either Stop's drain signal or the Runnable's ctx cancel.
+//
+// Composing with WithRetry resets the ticker cadence on every retry:
+// a tick error bails the loop, WithRetry re-enters runFunc, and the
+// next tick fires `interval` after the retry — not at the original
+// cadence. If you need stable cadence with transient-error tolerance,
+// handle retries inside `tick` instead.
 func NewTicker(interval time.Duration, tick func(ctx context.Context) error, opts ...Option) Runnable {
 	return New(func(ctx context.Context) error {
 		t := time.NewTicker(interval)

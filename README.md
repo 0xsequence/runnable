@@ -129,12 +129,18 @@ HTTP request that creates remote state), use `WithDrain` to switch to
 "signal-and-wait" semantics: `Stop` closes the channel returned by
 `Stopping(ctx)` and waits up to the drain timeout for runFunc to return
 on its own. If the timeout elapses, `Stop` falls back to cancelling the
-context.
+context and returns `ErrDrainTimedOut` once runFunc exits.
+
+Always select on both `<-ctx.Done()` and `<-runnable.Stopping(ctx)` —
+`Stopping` signals only `Stop`; outer-context cancellation still arrives
+via `ctx.Done()` and a loop that ignores it will hang.
 
 ```go
 r := runnable.New(func(ctx context.Context) error {
     for {
         select {
+        case <-ctx.Done():
+            return ctx.Err()
         case <-runnable.Stopping(ctx):
             return nil // finish in-flight work, then return
         case <-time.After(time.Second):

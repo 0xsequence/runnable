@@ -10,10 +10,17 @@ type stoppingKey struct{}
 // Stopping returns a channel that closes when Stop has been called on
 // the Runnable that owns ctx. runFunc implementations under WithDrain
 // should select on it and return cleanly without cancelling in-flight
-// work. Returns a nil channel when ctx is not associated with a
-// drain-enabled Runnable — receiving from a nil channel blocks forever,
-// which is the correct no-op for callers that opt into drain semantics
-// only when configured.
+// work.
+//
+// Always also select on ctx.Done() — Stopping signals only Stop;
+// outer-context cancellation (e.g. the ctx passed to Run was cancelled
+// directly) still arrives via ctx.Done(). A loop that selects only on
+// Stopping(ctx) will hang on outer-ctx cancel.
+//
+// Returns a nil channel when ctx is not associated with a drain-enabled
+// Runnable — receiving from a nil channel blocks forever, which is the
+// correct no-op for callers that opt into drain semantics only when
+// configured.
 func Stopping(ctx context.Context) <-chan struct{} {
 	ch, _ := ctx.Value(stoppingKey{}).(<-chan struct{})
 	return ch
