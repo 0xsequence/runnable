@@ -81,18 +81,20 @@ func TestRunnable(t *testing.T) {
 		assert.Equal(t, false, r.IsRunning())
 	})
 
-	t.Run("runnable, stop timeout", func(t *testing.T) {
+	t.Run("runnable, stop timeout proves no drain behavior", func(t *testing.T) {
 		started := make(chan struct{})
+		ctxCancelObserved := make(chan struct{})
 
 		r := New(func(ctx context.Context) error {
 			started <- struct{}{}
+			<-ctx.Done()
+			close(ctxCancelObserved)
 			time.Sleep(2 * time.Second)
-			return nil
+			return ctx.Err()
 		})
 
 		go func() {
-			err := r.Run(context.Background())
-			require.NoError(t, err)
+			_ = r.Run(context.Background())
 		}()
 
 		<-started
@@ -101,7 +103,15 @@ func TestRunnable(t *testing.T) {
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer stopCancel()
 		err := r.Stop(stopCtx)
-		require.Error(t, err, context.DeadlineExceeded)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+
+		// Without WithDrain, Stop cancels runFunc's ctx immediately.
+		select {
+		case <-ctxCancelObserved:
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("expected runFunc's ctx to be cancelled when Stop fires without WithDrain")
+		}
+
 		assert.Equal(t, true, r.IsRunning())
 	})
 }

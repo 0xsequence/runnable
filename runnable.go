@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 )
 
 var (
@@ -27,6 +28,10 @@ type runnable struct {
 	runCtx    context.Context
 	runCancel context.CancelFunc
 	runStop   chan bool
+
+	drainEnabled bool
+	drainTimeout time.Duration
+	stoppingChan chan struct{}
 
 	isRunning bool
 	onStart   func()
@@ -92,6 +97,10 @@ func (r *runnable) Run(ctx context.Context) error {
 	r.runStop = make(chan bool)
 
 	runCtx := r.runCtx
+	if r.drainEnabled {
+		r.stoppingChan = make(chan struct{})
+		runCtx = context.WithValue(runCtx, stoppingKey{}, (<-chan struct{})(r.stoppingChan))
+	}
 	r.mu.Unlock()
 
 	defer func() {
@@ -134,7 +143,26 @@ func (r *runnable) Stop(ctx context.Context) error {
 	}
 
 	runStop := r.runStop
+	drainEnabled := r.drainEnabled
+	drainTimeout := r.drainTimeout
+	stoppingChan := r.stoppingChan
 	r.mu.Unlock()
+
+	if drainEnabled {
+		close(stoppingChan)
+		drainCtx, drainCancel := context.WithTimeout(ctx, drainTimeout)
+		select {
+		case <-runStop:
+			drainCancel()
+			return nil
+		case <-ctx.Done():
+			drainCancel()
+			return ctx.Err()
+		case <-drainCtx.Done():
+			// Drain timed out; fall through to forced cancel.
+		}
+		drainCancel()
+	}
 
 	r.runCancel()
 

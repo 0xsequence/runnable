@@ -121,6 +121,29 @@ if err != nil {
 }
 ```
 
+### Drain on Stop
+
+By default, `Stop` cancels the runFunc's context, which aborts in-flight
+work. For workers that own external calls that must complete (e.g. an
+HTTP request that creates remote state), use `WithDrain` to switch to
+"signal-and-wait" semantics: `Stop` closes the channel returned by
+`Stopping(ctx)` and waits up to the drain timeout for runFunc to return
+on its own. If the timeout elapses, `Stop` falls back to cancelling the
+context.
+
+```go
+r := runnable.New(func(ctx context.Context) error {
+    for {
+        select {
+        case <-runnable.Stopping(ctx):
+            return nil // finish in-flight work, then return
+        case <-time.After(time.Second):
+            doWork(ctx)
+        }
+    }
+}, runnable.WithDrain(10*time.Second))
+```
+
 ### Runnable Object
 ```go
 package main
