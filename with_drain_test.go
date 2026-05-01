@@ -133,6 +133,39 @@ func TestWithDrain(t *testing.T) {
 		assert.False(t, r.IsRunning())
 	})
 
+	t.Run("Stop forces cancel when caller ctx expires during drain", func(t *testing.T) {
+		started := make(chan struct{})
+		runFuncDone := make(chan struct{})
+
+		// runFunc respects its own ctx but not Stopping(ctx). Without
+		// the independent drain timer, Stop with a caller ctx shorter
+		// than drainTimeout could return ctx.Err() before r.runCancel()
+		// fired, leaving the runnable alive.
+		r := New(func(ctx context.Context) error {
+			close(started)
+			<-ctx.Done()
+			close(runFuncDone)
+			return ctx.Err()
+		}, WithDrain(10*time.Second))
+
+		go func() {
+			_ = r.Run(context.Background())
+		}()
+
+		<-started
+
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer stopCancel()
+		err := r.Stop(stopCtx)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+
+		select {
+		case <-runFuncDone:
+		case <-time.After(2 * time.Second):
+			t.Fatal("runnable was not force-cancelled when caller ctx expired during drain")
+		}
+	})
+
 	t.Run("Stop is concurrency-safe", func(t *testing.T) {
 		started := make(chan struct{})
 

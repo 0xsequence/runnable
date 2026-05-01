@@ -153,18 +153,22 @@ func (r *runnable) Stop(ctx context.Context) error {
 	var drainTimedOut bool
 	if drainEnabled && stoppingChan != nil {
 		close(stoppingChan)
-		drainCtx, drainCancel := context.WithTimeout(ctx, drainTimeout)
+		// Use a standalone timer so the drain budget is independent of
+		// the caller's ctx — otherwise a caller ctx shorter than
+		// drainTimeout makes <-ctx.Done() and the drain expiry race in
+		// the same select.
+		drainTimer := time.NewTimer(drainTimeout)
 		select {
 		case <-runStop:
-			drainCancel()
+			drainTimer.Stop()
 			return nil
-		case <-ctx.Done():
-			drainCancel()
-			return ctx.Err()
-		case <-drainCtx.Done():
+		case <-drainTimer.C:
 			drainTimedOut = true
+		case <-ctx.Done():
+			drainTimer.Stop()
+			// Caller deadline elapsed during drain; fall through so
+			// r.runCancel() still fires before we return ctx.Err().
 		}
-		drainCancel()
 	}
 
 	r.runCancel()
