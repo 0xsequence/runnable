@@ -50,7 +50,7 @@ func TestWithDrain(t *testing.T) {
 		}
 	})
 
-	t.Run("Stop falls back to cancel on drain timeout", func(t *testing.T) {
+	t.Run("Stop returns ErrDrainTimedOut on fall-through", func(t *testing.T) {
 		started := make(chan struct{})
 		runFuncErr := make(chan error, 1)
 
@@ -69,7 +69,7 @@ func TestWithDrain(t *testing.T) {
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer stopCancel()
 		err := r.Stop(stopCtx)
-		require.NoError(t, err)
+		require.ErrorIs(t, err, ErrDrainTimedOut)
 		assert.False(t, r.IsRunning())
 
 		select {

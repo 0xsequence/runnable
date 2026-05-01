@@ -10,6 +10,7 @@ import (
 var (
 	ErrAlreadyRunning = fmt.Errorf("already running")
 	ErrNotRunning     = fmt.Errorf("not running")
+	ErrDrainTimedOut  = fmt.Errorf("drain timed out")
 )
 
 type Option interface {
@@ -149,6 +150,7 @@ func (r *runnable) Stop(ctx context.Context) error {
 	r.stoppingChan = nil // first-caller wins; subsequent concurrent Stops see nil
 	r.mu.Unlock()
 
+	var drainTimedOut bool
 	if drainEnabled && stoppingChan != nil {
 		close(stoppingChan)
 		drainCtx, drainCancel := context.WithTimeout(ctx, drainTimeout)
@@ -160,7 +162,7 @@ func (r *runnable) Stop(ctx context.Context) error {
 			drainCancel()
 			return ctx.Err()
 		case <-drainCtx.Done():
-			// Drain timed out; fall through to forced cancel.
+			drainTimedOut = true
 		}
 		drainCancel()
 	}
@@ -171,6 +173,9 @@ func (r *runnable) Stop(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-runStop:
+		if drainTimedOut {
+			return ErrDrainTimedOut
+		}
 		return nil
 	}
 }
