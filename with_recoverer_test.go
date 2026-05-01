@@ -25,7 +25,6 @@ func TestWithRecoverer(t *testing.T) {
 		fn := func(ctx context.Context) error {
 			defer func() { counter++ }()
 			panic("something went wrong")
-			return nil
 		}
 		r := New(fn, WithRecoverer(&reporter, nil))
 
@@ -42,7 +41,6 @@ func TestWithRecoverer(t *testing.T) {
 		r := New(func(ctx context.Context) error {
 			started <- struct{}{}
 			panic("something went wrong")
-			return nil
 		}, WithRecoverer(reporter, nil))
 
 		go func() {
@@ -82,7 +80,6 @@ func TestWithRecoverer(t *testing.T) {
 		r := New(func(ctx context.Context) error {
 			started <- struct{}{}
 			panic("something went wrong")
-			return nil
 		}, WithRecoverer(reporter, nil), WithStatus("test", store))
 
 		go func() {

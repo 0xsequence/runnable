@@ -43,11 +43,8 @@ func TestRunnable(t *testing.T) {
 		r := New(func(ctx context.Context) error {
 			started <- struct{}{}
 			time.Sleep(2 * time.Second)
-
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+			<-ctx.Done()
+			return ctx.Err()
 		})
 
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)

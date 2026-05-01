@@ -33,7 +33,6 @@ func (m *Monitor) run(ctx context.Context) error {
 		time.Sleep(1 * time.Second)
 		fmt.Println("Monitoring...")
 	}
-	return nil
 }
 
 func main() {
@@ -92,7 +91,8 @@ func main() {
 
 	// simple function with timeout
 	fmt.Println("Simple function with timeout...")
-	ctxWithTimeout, _ := context.WithTimeout(context.Background(), 5*time.Second)
+	ctxWithTimeout, cancelTimeout := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelTimeout()
 	err = runnable.New(func(ctx context.Context) error {
 		fmt.Println("Starting...")
 		defer fmt.Println("Stopping...")
