@@ -144,6 +144,32 @@ r := runnable.New(func(ctx context.Context) error {
 }, runnable.WithDrain(10*time.Second))
 ```
 
+### Ticker
+
+`NewTicker` wraps the standard "select-loop on a `time.Ticker`" pattern.
+It composes with `WithDrain` (let the current tick finish on Stop) and
+`WithRecoverer` (catch panics in the tick body).
+
+```go
+r := runnable.NewTicker(
+    30*time.Second,
+    func(ctx context.Context) error {
+        return reconcile(ctx)
+    },
+    runnable.WithDrain(10*time.Second),
+)
+
+go r.Run(ctx)
+
+// On shutdown:
+stopCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+defer cancel()
+r.Stop(stopCtx) // drains the in-flight tick before returning
+```
+
+A full SIGTERM-safe shape (ticker + drain + recoverer + signal.NotifyContext)
+lives in [`examples/ticker-with-drain`](examples/ticker-with-drain/main.go).
+
 ### Runnable Object
 ```go
 package main
