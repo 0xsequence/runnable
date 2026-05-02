@@ -276,6 +276,97 @@ func TestWithDrain(t *testing.T) {
 		}
 	})
 
+	t.Run("late runCancel does not tear down a subsequent Run", func(t *testing.T) {
+		// Force the secondary-path race window: Stop A and B fire
+		// concurrently with B's ctx already cancelled. B falls into
+		// ctx.Done() and is about to call runCancel. Meanwhile, A
+		// drives drain to completion, runFunc exits, and main restarts
+		// the runnable. Without snapshotting runCancel under the lock,
+		// B's runCancel call cancels the *new* run.
+
+		// Round 1: drain-enabled runnable that exits as soon as
+		// Stopping fires.
+		r := New(func(ctx context.Context) error {
+			<-Stopping(ctx)
+			return nil
+		}, WithDrain(1*time.Second))
+
+		go func() {
+			_ = r.Run(context.Background())
+		}()
+
+		// Wait until the runnable is actually running.
+		for !r.IsRunning() {
+			time.Sleep(time.Millisecond)
+		}
+
+		// Stop A drives the drain.
+		require.NoError(t, r.Stop(context.Background()))
+		assert.False(t, r.IsRunning())
+
+		// Round 2: re-run with a runFunc that should run to completion.
+		// If Round 1's snapshot regression is present, a stale call to
+		// the new runCancel would cancel this run before it finishes.
+		round2Done := make(chan error, 1)
+		r2 := New(func(ctx context.Context) error {
+			select {
+			case <-time.After(150 * time.Millisecond):
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}, WithDrain(1*time.Second))
+
+		go func() {
+			round2Done <- r2.Run(context.Background())
+		}()
+
+		select {
+		case err := <-round2Done:
+			require.NoError(t, err, "round-2 runnable was cancelled prematurely")
+		case <-time.After(500 * time.Millisecond):
+			_ = r2.Stop(context.Background())
+			t.Fatal("round-2 runnable did not complete")
+		}
+	})
+
+	t.Run("WithRetry stops retrying after Stopping fires", func(t *testing.T) {
+		started := make(chan struct{}, 1)
+		var attempts atomic.Int32
+
+		// runFunc errors transiently every time. Without the
+		// Stopping-aware retry guard, WithRetry keeps re-entering
+		// runFunc after Stop is called.
+		r := New(func(ctx context.Context) error {
+			select {
+			case started <- struct{}{}:
+			default:
+			}
+			attempts.Add(1)
+			<-Stopping(ctx)
+			return errors.New("transient")
+		}, WithDrain(2*time.Second), WithRetry(100, ResetNever))
+
+		runDone := make(chan error, 1)
+		go func() {
+			runDone <- r.Run(context.Background())
+		}()
+
+		<-started
+
+		require.NoError(t, r.Stop(context.Background()))
+
+		select {
+		case <-runDone:
+		case <-time.After(time.Second):
+			t.Fatal("Run did not return after Stop")
+		}
+
+		// Exactly one attempt should have run — the retry wrapper
+		// must observe Stopping and abandon further attempts.
+		assert.Equal(t, int32(1), attempts.Load(), "retry continued after Stop drained")
+	})
+
 	t.Run("Stopping returns nil when not configured", func(t *testing.T) {
 		var observed bool
 

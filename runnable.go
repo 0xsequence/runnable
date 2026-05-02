@@ -144,6 +144,10 @@ func (r *runnable) Stop(ctx context.Context) error {
 	}
 
 	runStop := r.runStop
+	// Snapshot runCancel under the lock — the field is overwritten by
+	// the next Run, so reading r.runCancel() after waiting can cancel
+	// a *future* runnable that started after this Stop began draining.
+	runCancel := r.runCancel
 	drainEnabled := r.drainEnabled
 	drainTimeout := r.drainTimeout
 	stoppingChan := r.stoppingChan
@@ -161,7 +165,7 @@ func (r *runnable) Stop(ctx context.Context) error {
 		case <-runStop:
 			return nil
 		case <-ctx.Done():
-			r.runCancel()
+			runCancel()
 			return ctx.Err()
 		}
 	}
@@ -187,7 +191,7 @@ func (r *runnable) Stop(ctx context.Context) error {
 		}
 	}
 
-	r.runCancel()
+	runCancel()
 
 	select {
 	case <-ctx.Done():
