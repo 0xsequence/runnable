@@ -276,17 +276,20 @@ func TestWithDrain(t *testing.T) {
 		}
 	})
 
-	t.Run("same runnable survives Run-Stop-Run after secondary ctx.Done escalation", func(t *testing.T) {
-		// Round 1: a primary Stop drives drain to completion while a
-		// secondary Stop with an already-cancelled ctx hits the
-		// ctx.Done() branch and calls runCancel (which is snapshotted
-		// under the lock — see runnable.go).
+	t.Run("runnable can be re-Run after a concurrent-Stop lifecycle", func(t *testing.T) {
+		// Lifecycle survival smoke test: a runnable that's been
+		// stopped via concurrent Stops (including one with an
+		// already-cancelled ctx hitting the runCancel escalation path)
+		// can be re-Run on the same instance and complete cleanly.
 		//
-		// Round 2: same runnable, fresh Run with no Stop. If the
-		// snapshot fix were missing, round 1's secondary runCancel
-		// could in principle cancel round 2's runCtx (the field gets
-		// overwritten by Run). The snapshot makes that mechanically
-		// impossible, so round 2 must run undisturbed until we Stop it.
+		// This does NOT deterministically cover the runCancel-snapshot
+		// race in runnable.go (where a stale Stop could in principle
+		// reach r.runCancel after Run has overwritten the field). That
+		// race requires pausing the secondary Stop between its lock
+		// release and runCancel call while a fresh Run executes —
+		// achievable only via testing/synctest or a runtime hook.
+		// Both are out of scope here; the snapshot fix is verified by
+		// inspection, not this test.
 		r := New(func(ctx context.Context) error {
 			select {
 			case <-Stopping(ctx):
