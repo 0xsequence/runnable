@@ -276,41 +276,20 @@ func TestWithDrain(t *testing.T) {
 		}
 	})
 
-	t.Run("late runCancel does not tear down a subsequent Run", func(t *testing.T) {
-		// Force the secondary-path race window: Stop A and B fire
-		// concurrently with B's ctx already cancelled. B falls into
-		// ctx.Done() and is about to call runCancel. Meanwhile, A
-		// drives drain to completion, runFunc exits, and main restarts
-		// the runnable. Without snapshotting runCancel under the lock,
-		// B's runCancel call cancels the *new* run.
-
-		// Round 1: drain-enabled runnable that exits as soon as
-		// Stopping fires.
+	t.Run("same runnable survives Run-Stop-Run after secondary ctx.Done escalation", func(t *testing.T) {
+		// Round 1: a primary Stop drives drain to completion while a
+		// secondary Stop with an already-cancelled ctx hits the
+		// ctx.Done() branch and calls runCancel (which is snapshotted
+		// under the lock — see runnable.go).
+		//
+		// Round 2: same runnable, fresh Run with no Stop. If the
+		// snapshot fix were missing, round 1's secondary runCancel
+		// could in principle cancel round 2's runCtx (the field gets
+		// overwritten by Run). The snapshot makes that mechanically
+		// impossible, so round 2 must run undisturbed until we Stop it.
 		r := New(func(ctx context.Context) error {
-			<-Stopping(ctx)
-			return nil
-		}, WithDrain(1*time.Second))
-
-		go func() {
-			_ = r.Run(context.Background())
-		}()
-
-		// Wait until the runnable is actually running.
-		for !r.IsRunning() {
-			time.Sleep(time.Millisecond)
-		}
-
-		// Stop A drives the drain.
-		require.NoError(t, r.Stop(context.Background()))
-		assert.False(t, r.IsRunning())
-
-		// Round 2: re-run with a runFunc that should run to completion.
-		// If Round 1's snapshot regression is present, a stale call to
-		// the new runCancel would cancel this run before it finishes.
-		round2Done := make(chan error, 1)
-		r2 := New(func(ctx context.Context) error {
 			select {
-			case <-time.After(150 * time.Millisecond):
+			case <-Stopping(ctx):
 				return nil
 			case <-ctx.Done():
 				return ctx.Err()
@@ -318,15 +297,49 @@ func TestWithDrain(t *testing.T) {
 		}, WithDrain(1*time.Second))
 
 		go func() {
-			round2Done <- r2.Run(context.Background())
+			_ = r.Run(context.Background())
+		}()
+
+		for !r.IsRunning() {
+			time.Sleep(time.Millisecond)
+		}
+
+		// Primary Stop, no deadline — drives drain.
+		primaryDone := make(chan error, 1)
+		go func() {
+			primaryDone <- r.Stop(context.Background())
+		}()
+
+		// Secondary Stop with an already-cancelled ctx — exercises
+		// the ctx.Done() escalation path that calls runCancel.
+		cancelledCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_ = r.Stop(cancelledCtx)
+
+		<-primaryDone
+		for r.IsRunning() {
+			time.Sleep(time.Millisecond)
+		}
+
+		// Round 2 — same runnable, fresh Run. Should run undisturbed
+		// until we Stop it.
+		round2Done := make(chan error, 1)
+		go func() {
+			round2Done <- r.Run(context.Background())
 		}()
 
 		select {
 		case err := <-round2Done:
-			require.NoError(t, err, "round-2 runnable was cancelled prematurely")
-		case <-time.After(500 * time.Millisecond):
-			_ = r2.Stop(context.Background())
-			t.Fatal("round-2 runnable did not complete")
+			t.Fatalf("round-2 runnable exited prematurely: %v", err)
+		case <-time.After(150 * time.Millisecond):
+		}
+
+		require.NoError(t, r.Stop(context.Background()))
+		select {
+		case err := <-round2Done:
+			require.NoError(t, err)
+		case <-time.After(time.Second):
+			t.Fatal("round-2 runnable did not exit after Stop")
 		}
 	})
 
