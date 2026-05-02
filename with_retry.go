@@ -46,6 +46,17 @@ func (w *withRetry) apply(r *runnable) {
 				return err
 			}
 
+			// Don't retry once Stop has been called via WithDrain —
+			// the retry wrapper would otherwise re-enter runFunc and
+			// start fresh work mid-shutdown, defeating drain semantics.
+			// When WithDrain is not used, Stopping(ctx) is nil and the
+			// default branch runs (no behavior change).
+			select {
+			case <-Stopping(ctx):
+				return err
+			default:
+			}
+
 			if i > 0 {
 				if r.onStop != nil {
 					r.onStop()
