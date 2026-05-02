@@ -11,8 +11,6 @@ const ResetNever time.Duration = 0
 type withRetry struct {
 	maxRetries int
 	resetAfter time.Duration
-
-	lastTime time.Time
 }
 
 func WithRetry(maxRetries int, resetAfter time.Duration) Option {
@@ -25,12 +23,15 @@ func WithRetry(maxRetries int, resetAfter time.Duration) Option {
 func (w *withRetry) apply(r *runnable) {
 	runFunc := r.runFunc
 	r.runFunc = func(ctx context.Context) error {
+		// lastTime is per-Run-cycle: a fresh Run after Stop should not
+		// inherit stale timing state from the prior cycle.
+		var lastTime time.Time
 		var err error
 		for i := 0; i < w.maxRetries; i++ {
-			if w.resetAfter != ResetNever && time.Since(w.lastTime) > w.resetAfter {
+			if w.resetAfter != ResetNever && time.Since(lastTime) > w.resetAfter {
 				i = 0
 			}
-			w.lastTime = time.Now()
+			lastTime = time.Now()
 
 			if i > 0 {
 				if r.onStart != nil {
