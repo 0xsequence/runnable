@@ -59,17 +59,25 @@ func main() {
 		runErr <- rc.Run(context.Background())
 	}()
 
-	<-sigCtx.Done()
-	fmt.Println("shutdown: draining in-flight tick...")
-
-	stopCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := rc.Stop(stopCtx); err != nil {
-		fmt.Fprintf(os.Stderr, "stop: %v\n", err)
-	}
-
-	if err := <-runErr; err != nil && !errors.Is(err, context.Canceled) {
-		fmt.Fprintf(os.Stderr, "reconciler stopped: %v\n", err)
-		os.Exit(1)
+	// Wait for either a shutdown signal or an early worker exit
+	// (tick error, recovered panic). Without the runErr branch, main
+	// would block on sigCtx forever after the worker died.
+	select {
+	case <-sigCtx.Done():
+		fmt.Println("shutdown: draining in-flight tick...")
+		stopCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := rc.Stop(stopCtx); err != nil {
+			fmt.Fprintf(os.Stderr, "stop: %v\n", err)
+		}
+		if err := <-runErr; err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintf(os.Stderr, "reconciler stopped: %v\n", err)
+			os.Exit(1)
+		}
+	case err := <-runErr:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintf(os.Stderr, "reconciler stopped: %v\n", err)
+			os.Exit(1)
+		}
 	}
 }
