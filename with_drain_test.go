@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -166,14 +167,25 @@ func TestWithDrain(t *testing.T) {
 		}
 	})
 
-	t.Run("Stop is concurrency-safe", func(t *testing.T) {
+	t.Run("concurrent Stop preserves drain semantics", func(t *testing.T) {
 		started := make(chan struct{})
+		drainObserved := make(chan struct{})
+		var ctxCancelObserved atomic.Bool
 
+		// runFunc must exit via Stopping(ctx). If a concurrent Stop
+		// falls through to r.runCancel(), ctx.Done() fires and the
+		// drain semantics are violated.
 		r := New(func(ctx context.Context) error {
 			close(started)
-			<-Stopping(ctx)
-			return nil
-		}, WithDrain(1*time.Second))
+			select {
+			case <-Stopping(ctx):
+				close(drainObserved)
+				return nil
+			case <-ctx.Done():
+				ctxCancelObserved.Store(true)
+				return ctx.Err()
+			}
+		}, WithDrain(2*time.Second))
 
 		go func() {
 			_ = r.Run(context.Background())
@@ -194,16 +206,74 @@ func TestWithDrain(t *testing.T) {
 		}
 		wg.Wait()
 
-		// No double-close panic is the load-bearing assertion. Each
-		// Stop must return either nil (drove or waited on the drain)
-		// or ErrNotRunning (Run already exited before this caller
-		// grabbed the lock).
+		// Each Stop must return either nil (drove or waited on the
+		// drain) or ErrNotRunning (Run already exited before this
+		// caller grabbed the lock). No double-close panic.
 		for _, err := range errs {
 			if err != nil {
 				require.ErrorIs(t, err, ErrNotRunning)
 			}
 		}
+
+		select {
+		case <-drainObserved:
+		default:
+			t.Fatal("runFunc never observed Stopping(ctx); drain was bypassed by concurrent Stop")
+		}
+		assert.False(t, ctxCancelObserved.Load(), "drain semantics violated: runCtx was hard-cancelled by a concurrent Stop")
 		assert.False(t, r.IsRunning())
+	})
+
+	t.Run("secondary Stop with shorter deadline escalates runCancel", func(t *testing.T) {
+		started := make(chan struct{})
+		runFuncDone := make(chan struct{})
+
+		// runFunc waits only on ctx.Done() (ignores Stopping). Without
+		// escalation, Stop B's deadline expires but the runnable keeps
+		// draining for the full drainTimeout (5s).
+		r := New(func(ctx context.Context) error {
+			close(started)
+			<-ctx.Done()
+			close(runFuncDone)
+			return ctx.Err()
+		}, WithDrain(5*time.Second))
+
+		go func() {
+			_ = r.Run(context.Background())
+		}()
+
+		<-started
+
+		// Stop A: no deadline; primary, drives drain.
+		aDone := make(chan error, 1)
+		go func() {
+			aDone <- r.Stop(context.Background())
+		}()
+
+		time.Sleep(20 * time.Millisecond)
+
+		// Stop B: 100ms deadline; secondary. Must escalate so runFunc
+		// exits within the caller's budget.
+		bCtx, bCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer bCancel()
+		start := time.Now()
+		bErr := r.Stop(bCtx)
+		bElapsed := time.Since(start)
+		require.ErrorIs(t, bErr, context.DeadlineExceeded)
+		assert.Less(t, bElapsed, 500*time.Millisecond, "Stop B should not wait beyond its own deadline")
+
+		select {
+		case <-runFuncDone:
+		case <-time.After(time.Second):
+			t.Fatal("runnable was not force-cancelled when secondary Stop's ctx expired")
+		}
+
+		select {
+		case err := <-aDone:
+			require.NoError(t, err)
+		case <-time.After(time.Second):
+			t.Fatal("Stop A did not return after runFunc exited")
+		}
 	})
 
 	t.Run("Stopping returns nil when not configured", func(t *testing.T) {

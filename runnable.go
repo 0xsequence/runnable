@@ -147,11 +147,27 @@ func (r *runnable) Stop(ctx context.Context) error {
 	drainEnabled := r.drainEnabled
 	drainTimeout := r.drainTimeout
 	stoppingChan := r.stoppingChan
-	r.stoppingChan = nil // first-caller wins; subsequent concurrent Stops see nil
+	r.stoppingChan = nil // first-caller wins; subsequent Stops see nil
 	r.mu.Unlock()
 
+	// Concurrent Stop with drain enabled: another caller is already
+	// driving the drain. Wait for its outcome rather than calling
+	// runCancel ourselves — that would hard-cancel the runCtx and
+	// defeat the drain the primary caller is honoring. If our ctx
+	// expires first, escalate to runCancel so the shortest deadline
+	// among concurrent callers wins.
+	if drainEnabled && stoppingChan == nil {
+		select {
+		case <-runStop:
+			return nil
+		case <-ctx.Done():
+			r.runCancel()
+			return ctx.Err()
+		}
+	}
+
 	var drainTimedOut bool
-	if drainEnabled && stoppingChan != nil {
+	if drainEnabled {
 		close(stoppingChan)
 		// Use a standalone timer so the drain budget is independent of
 		// the caller's ctx — otherwise a caller ctx shorter than
