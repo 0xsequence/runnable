@@ -1,8 +1,8 @@
 // Example: a periodic reconciler that drains gracefully on SIGTERM.
 //
-// Shape: NewTicker + WithDrain + WithRecoverer + signal.NotifyContext.
-// Copy-paste this into a service's cmd/.../main.go and replace the
-// reconcile body with your work.
+// Shape: adapters.Draining + adapters.Ticker + WithRecoverer +
+// signal.NotifyContext. Copy-paste into a service's cmd/.../main.go
+// and replace the reconcile body with your work.
 package main
 
 import (
@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/0xsequence/runnable"
+	"github.com/0xsequence/runnable/adapters"
 )
 
 type stderrReporter struct{}
@@ -31,8 +32,8 @@ func (stderrPrinter) Print(ctx context.Context, callstack []byte) {
 
 func reconcile(ctx context.Context) error {
 	// Pretend this is an HTTP call to an external system that must not
-	// be aborted mid-request when SIGTERM fires. Under WithDrain, Stop
-	// waits for this tick to finish before tearing down the Runnable.
+	// be aborted mid-request when SIGTERM fires. Under Draining, this
+	// tick is allowed to finish before the runnable tears down.
 	fmt.Println("tick: reconciling...")
 	time.Sleep(500 * time.Millisecond)
 	fmt.Println("tick: done")
@@ -43,25 +44,21 @@ func main() {
 	sigCtx, stopSig := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stopSig()
 
-	rc := runnable.NewTicker(
-		2*time.Second,
-		reconcile,
-		runnable.WithDrain(10*time.Second),
+	// Unlike v0.1, passing sigCtx directly to Run is safe: the
+	// Draining adapter intercepts cancellation and triggers drain
+	// rather than aborting work.
+	rc := runnable.New(
+		adapters.Draining(10*time.Second,
+			adapters.Ticker(2*time.Second, reconcile),
+		),
 		runnable.WithRecoverer(stderrReporter{}, stderrPrinter{}),
 	)
 
-	// Run with a pristine ctx — if Run received sigCtx, SIGTERM would
-	// cancel runFunc's ctx directly and the ticker would exit before
-	// Stop ever closed Stopping(ctx), defeating WithDrain. Stop is the
-	// only thing that should drive shutdown of a drain-enabled worker.
 	runErr := make(chan error, 1)
 	go func() {
-		runErr <- rc.Run(context.Background())
+		runErr <- rc.Run(sigCtx)
 	}()
 
-	// Wait for either a shutdown signal or an early worker exit
-	// (tick error, recovered panic). Without the runErr branch, main
-	// would block on sigCtx forever after the worker died.
 	select {
 	case <-sigCtx.Done():
 		fmt.Println("shutdown: draining in-flight tick...")
@@ -70,7 +67,7 @@ func main() {
 		if err := rc.Stop(stopCtx); err != nil {
 			fmt.Fprintf(os.Stderr, "stop: %v\n", err)
 		}
-		if err := <-runErr; err != nil && !errors.Is(err, context.Canceled) {
+		if err := <-runErr; err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, adapters.ErrDrainTimedOut) {
 			fmt.Fprintf(os.Stderr, "reconciler stopped: %v\n", err)
 			os.Exit(1)
 		}
