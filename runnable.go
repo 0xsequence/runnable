@@ -133,9 +133,9 @@ func (r *runnable) Stop(ctx context.Context) error {
 		return ErrNotRunning
 	}
 	runStop := r.runStop
-	// Snapshot runCancel under the lock — the field is overwritten by
-	// the next Run, so reading r.runCancel() after waiting can cancel
-	// a future runnable that started after this Stop began.
+	// Snapshot runCancel under the lock — Run overwrites this field
+	// on each cycle, so reading it without synchronization races with
+	// a concurrent or subsequent Run.
 	runCancel := r.runCancel
 	r.mu.Unlock()
 

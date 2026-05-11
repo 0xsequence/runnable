@@ -136,22 +136,17 @@ r := runnable.New(adapters.Ticker(30*time.Second, reconcile))
 **Draining** — graceful shutdown with a grace window. When the outer
 ctx is cancelled, work has `timeout` to return via `adapters.Stopping(ctx)`
 before its ctx is force-cancelled and `adapters.ErrDrainTimedOut` is
-returned. Always select on both `ctx.Done()` and `Stopping(ctx)`:
+returned.
 
 ```go
 r := runnable.New(adapters.Draining(10*time.Second,
-    adapters.Ticker(30*time.Second, func(ctx context.Context) error {
-        select {
-        case <-ctx.Done():
-            return ctx.Err()
-        case <-adapters.Stopping(ctx):
-            return nil
-        case <-time.After(time.Second):
-            return doWork(ctx)
-        }
-    }),
+    adapters.Ticker(30*time.Second, reconcile),
 ))
 ```
+
+Inside long-running work, always select on both `ctx.Done()` and
+`adapters.Stopping(ctx)` — `Stopping` signals drain start, `ctx.Done()`
+fires only when the drain timer expires.
 
 A full SIGTERM-safe service shape lives in
 [`examples/ticker-with-drain`](examples/ticker-with-drain/main.go).
