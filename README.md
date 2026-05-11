@@ -121,60 +121,77 @@ if err != nil {
 }
 ```
 
-### Drain on Stop
+### Adapters
 
-By default, `Stop` cancels the runFunc's context, which aborts in-flight
-work. For workers that own external calls that must complete (e.g. an
-HTTP request that creates remote state), use `WithDrain` to switch to
-"signal-and-wait" semantics: `Stop` closes the channel returned by
-`Stopping(ctx)` and waits up to the drain timeout for runFunc to return
-on its own. If the timeout elapses, `Stop` falls back to cancelling the
-context and returns `ErrDrainTimedOut` once runFunc exits.
+Cross-cutting behaviors that aren't part of the core lifecycle live in
+the `runnable/adapters` subpackage as runFunc wrappers. They compose by
+nesting.
 
-Always select on both `<-ctx.Done()` and `<-runnable.Stopping(ctx)` —
-`Stopping` signals only `Stop`; outer-context cancellation still arrives
-via `ctx.Done()` and a loop that ignores it will hang.
+**Ticker** — periodic execution:
 
 ```go
-r := runnable.New(func(ctx context.Context) error {
-    for {
+r := runnable.New(adapters.Ticker(30*time.Second, reconcile))
+```
+
+**Draining** — graceful shutdown with a grace window. When the outer
+ctx is cancelled, work has `timeout` to return via `adapters.Stopping(ctx)`
+before its ctx is force-cancelled and `adapters.ErrDrainTimedOut` is
+returned. Always select on both `ctx.Done()` and `Stopping(ctx)`:
+
+```go
+r := runnable.New(adapters.Draining(10*time.Second,
+    adapters.Ticker(30*time.Second, func(ctx context.Context) error {
         select {
         case <-ctx.Done():
             return ctx.Err()
-        case <-runnable.Stopping(ctx):
-            return nil // finish in-flight work, then return
+        case <-adapters.Stopping(ctx):
+            return nil
         case <-time.After(time.Second):
-            doWork(ctx)
+            return doWork(ctx)
         }
-    }
-}, runnable.WithDrain(10*time.Second))
+    }),
+))
 ```
 
-### Ticker
+A full SIGTERM-safe service shape lives in
+[`examples/ticker-with-drain`](examples/ticker-with-drain/main.go).
 
-`NewTicker` wraps the standard "select-loop on a `time.Ticker`" pattern.
-It composes with `WithDrain` (let the current tick finish on Stop) and
-`WithRecoverer` (catch panics in the tick body).
+### Migrating from v0.1 to v0.2
 
-```go
-r := runnable.NewTicker(
-    30*time.Second,
-    func(ctx context.Context) error {
-        return reconcile(ctx)
-    },
-    runnable.WithDrain(10*time.Second),
-)
+v0.2 moves drain and ticker out of the core package. The Option-based
+`WithDrain` and the `NewTicker` constructor are removed; their
+replacements live at `runnable/adapters`.
 
-go r.Run(ctx)
+Before (v0.1):
 
-// On shutdown:
-stopCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-defer cancel()
-r.Stop(stopCtx) // drains the in-flight tick before returning
-```
+    r := runnable.NewTicker(30*time.Second, doWork,
+        runnable.WithDrain(10*time.Second),
+    )
 
-A full SIGTERM-safe shape (ticker + drain + recoverer + signal.NotifyContext)
-lives in [`examples/ticker-with-drain`](examples/ticker-with-drain/main.go).
+After (v0.2):
+
+    r := runnable.New(adapters.Draining(10*time.Second,
+        adapters.Ticker(30*time.Second, doWork),
+    ))
+
+Symbol mapping:
+
+- `runnable.WithDrain` → use `adapters.Draining` as a runFunc wrapper.
+- `runnable.NewTicker` → `adapters.Ticker` wrapped by `runnable.New`.
+- `runnable.Stopping` → `adapters.Stopping`.
+- `runnable.ErrDrainTimedOut` → `adapters.ErrDrainTimedOut`.
+
+**Behavioral change:** `Stop(ctx)`'s ctx no longer shortens the drain
+window. In v0.1, a caller ctx shorter than `WithDrain`'s timeout would
+force-cancel mid-drain. In v0.2, `Stop`'s ctx only governs how long
+the caller waits for `Stop` to return; the drain runs on its own
+fixed-duration timer regardless. If you need a shorter drain budget,
+configure `Draining` with the shorter duration.
+
+**NewGroup interaction:** drain-enabled children of `NewGroup` now
+drain when the group is stopped (v0.1 silently bypassed the child's
+drain). No code change required at call sites — the adapter design
+fixes this by construction.
 
 ### Runnable Object
 ```go
