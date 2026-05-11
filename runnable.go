@@ -4,13 +4,11 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 )
 
 var (
 	ErrAlreadyRunning = fmt.Errorf("already running")
 	ErrNotRunning     = fmt.Errorf("not running")
-	ErrDrainTimedOut  = fmt.Errorf("drain timed out")
 )
 
 type Option interface {
@@ -29,10 +27,6 @@ type runnable struct {
 	runCtx    context.Context
 	runCancel context.CancelFunc
 	runStop   chan bool
-
-	drainEnabled bool
-	drainTimeout time.Duration
-	stoppingChan chan struct{}
 
 	isRunning bool
 	onStart   func()
@@ -98,10 +92,6 @@ func (r *runnable) Run(ctx context.Context) error {
 	r.runStop = make(chan bool)
 
 	runCtx := r.runCtx
-	if r.drainEnabled {
-		r.stoppingChan = make(chan struct{})
-		runCtx = context.WithValue(runCtx, stoppingKey{}, (<-chan struct{})(r.stoppingChan))
-	}
 	r.mu.Unlock()
 
 	defer func() {
@@ -142,54 +132,12 @@ func (r *runnable) Stop(ctx context.Context) error {
 		r.mu.Unlock()
 		return ErrNotRunning
 	}
-
 	runStop := r.runStop
 	// Snapshot runCancel under the lock — the field is overwritten by
 	// the next Run, so reading r.runCancel() after waiting can cancel
-	// a *future* runnable that started after this Stop began draining.
+	// a future runnable that started after this Stop began.
 	runCancel := r.runCancel
-	drainEnabled := r.drainEnabled
-	drainTimeout := r.drainTimeout
-	stoppingChan := r.stoppingChan
-	r.stoppingChan = nil // first-caller wins; subsequent Stops see nil
 	r.mu.Unlock()
-
-	// Concurrent Stop with drain enabled: another caller is already
-	// driving the drain. Wait for its outcome rather than calling
-	// runCancel ourselves — that would hard-cancel the runCtx and
-	// defeat the drain the primary caller is honoring. If our ctx
-	// expires first, escalate to runCancel so the shortest deadline
-	// among concurrent callers wins.
-	if drainEnabled && stoppingChan == nil {
-		select {
-		case <-runStop:
-			return nil
-		case <-ctx.Done():
-			runCancel()
-			return ctx.Err()
-		}
-	}
-
-	var drainTimedOut bool
-	if drainEnabled {
-		close(stoppingChan)
-		// Use a standalone timer so the drain budget is independent of
-		// the caller's ctx — otherwise a caller ctx shorter than
-		// drainTimeout makes <-ctx.Done() and the drain expiry race in
-		// the same select.
-		drainTimer := time.NewTimer(drainTimeout)
-		select {
-		case <-runStop:
-			drainTimer.Stop()
-			return nil
-		case <-drainTimer.C:
-			drainTimedOut = true
-		case <-ctx.Done():
-			drainTimer.Stop()
-			// Caller deadline elapsed during drain; fall through so
-			// r.runCancel() still fires before we return ctx.Err().
-		}
-	}
 
 	runCancel()
 
@@ -197,9 +145,6 @@ func (r *runnable) Stop(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-runStop:
-		if drainTimedOut {
-			return ErrDrainTimedOut
-		}
 		return nil
 	}
 }
