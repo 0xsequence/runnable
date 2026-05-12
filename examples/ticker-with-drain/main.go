@@ -1,8 +1,8 @@
 // Example: a periodic reconciler that drains gracefully on SIGTERM.
 //
-// Shape: adapters.Draining + adapters.Ticker + signal.NotifyContext.
-// Copy-paste into a service's cmd/.../main.go and replace the reconcile
-// body with your work.
+// Shape: runnable.WithAdapters composing Draining + Ticker, driven by
+// signal.NotifyContext. Copy-paste into a service's cmd/.../main.go
+// and replace the reconcile body with your work.
 package main
 
 import (
@@ -32,20 +32,13 @@ func main() {
 	sigCtx, stopSig := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stopSig()
 
-	// Unlike v0.1, passing sigCtx directly to Run is safe: the
-	// Draining adapter intercepts cancellation and triggers drain
-	// rather than aborting work.
-	//
-	// Note on panics: a panic inside reconcile is recovered by
-	// Draining and surfaced as an error from rc.Run. runnable.WithRecoverer
-	// does NOT catch tick panics in this composition (recover only fires
-	// on the goroutine where the deferred call lives, and Draining runs
-	// work on its own goroutine). Read panics off runErr below.
-	rc := runnable.New(
-		adapters.Draining(10*time.Second,
-			adapters.Ticker(2*time.Second, reconcile),
-		),
-	)
+	// Adapters compose left-to-right (first listed = outermost). Draining
+	// catches outer ctx cancellation and turns it into drain rather than
+	// abort.
+	rc := runnable.New(reconcile, runnable.WithAdapters(
+		adapters.Draining(10*time.Second),
+		adapters.Ticker(2*time.Second),
+	))
 
 	runErr := make(chan error, 1)
 	go func() {

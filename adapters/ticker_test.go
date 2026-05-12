@@ -28,7 +28,7 @@ func TestTicker_FiresOnInterval(t *testing.T) {
 		return nil
 	}
 
-	r := runnable.New(adapters.Ticker(20*time.Millisecond, tick))
+	r := runnable.New(tick, runnable.WithAdapters(adapters.Ticker(20*time.Millisecond)))
 	go func() { _ = r.Run(context.Background()) }()
 
 	for i := 0; i < 3; i++ {
@@ -55,8 +55,9 @@ func TestTicker_ComposesWithDraining(t *testing.T) {
 		return nil
 	}
 
-	r := runnable.New(adapters.Draining(1*time.Second,
-		adapters.Ticker(20*time.Millisecond, tick),
+	r := runnable.New(tick, runnable.WithAdapters(
+		adapters.Draining(1*time.Second),
+		adapters.Ticker(20*time.Millisecond),
 	))
 	go func() { _ = r.Run(context.Background()) }()
 
@@ -84,7 +85,7 @@ func TestTicker_WithoutDrainCancelsInFlightTick(t *testing.T) {
 		return ctx.Err()
 	}
 
-	r := runnable.New(adapters.Ticker(20*time.Millisecond, tick))
+	r := runnable.New(tick, runnable.WithAdapters(adapters.Ticker(20*time.Millisecond)))
 	go func() { _ = r.Run(context.Background()) }()
 
 	<-tickStarted
@@ -109,7 +110,7 @@ func TestTicker_TickErrorAbortsLoop(t *testing.T) {
 		return nil
 	}
 
-	r := runnable.New(adapters.Ticker(20*time.Millisecond, tick))
+	r := runnable.New(tick, runnable.WithAdapters(adapters.Ticker(20*time.Millisecond)))
 	err := r.Run(context.Background())
 	require.ErrorIs(t, err, sentinel)
 	assert.Equal(t, int32(2), count.Load())
@@ -122,7 +123,7 @@ func TestTicker_RespectsOuterCtxCancel(t *testing.T) {
 		return nil
 	}
 
-	r := runnable.New(adapters.Ticker(20*time.Millisecond, tick))
+	r := runnable.New(tick, runnable.WithAdapters(adapters.Ticker(20*time.Millisecond)))
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
 	defer cancel()
 
