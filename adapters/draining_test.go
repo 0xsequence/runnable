@@ -33,7 +33,7 @@ func TestDraining_WorkReturnsNaturallyViaStopping(t *testing.T) {
 		}
 	}
 
-	r := runnable.New(adapters.Draining(1*time.Second, work))
+	r := runnable.New(work, runnable.WithAdapters(adapters.Draining(1*time.Second)))
 	runErr := make(chan error, 1)
 	go func() { runErr <- r.Run(context.Background()) }()
 
@@ -63,7 +63,7 @@ func TestDraining_TimerForcesCancelWhenWorkIgnoresStopping(t *testing.T) {
 		return ctx.Err()
 	}
 
-	r := runnable.New(adapters.Draining(100*time.Millisecond, work))
+	r := runnable.New(work, runnable.WithAdapters(adapters.Draining(100*time.Millisecond)))
 	runErr := make(chan error, 1)
 	go func() { runErr <- r.Run(context.Background()) }()
 
@@ -98,7 +98,7 @@ func TestDraining_OuterCtxCancelTriggersDrain(t *testing.T) {
 		}
 	}
 
-	r := runnable.New(adapters.Draining(1*time.Second, work))
+	r := runnable.New(work, runnable.WithAdapters(adapters.Draining(1*time.Second)))
 	ctx, cancel := context.WithCancel(context.Background())
 	runErr := make(chan error, 1)
 	go func() { runErr <- r.Run(ctx) }()
@@ -131,7 +131,7 @@ func TestDraining_ConcurrentStopsPreserveDrainSemantics(t *testing.T) {
 		}
 	}
 
-	r := runnable.New(adapters.Draining(2*time.Second, work))
+	r := runnable.New(work, runnable.WithAdapters(adapters.Draining(2*time.Second)))
 	go func() { _ = r.Run(context.Background()) }()
 
 	<-started
@@ -167,21 +167,20 @@ func TestDraining_WorkErrorPropagatesWithoutDrain(t *testing.T) {
 	sentinel := errors.New("work failed")
 	work := func(ctx context.Context) error { return sentinel }
 
-	r := runnable.New(adapters.Draining(1*time.Second, work))
+	r := runnable.New(work, runnable.WithAdapters(adapters.Draining(1*time.Second)))
 	err := r.Run(context.Background())
 	require.ErrorIs(t, err, sentinel)
 }
 
 func TestDraining_RecoversPanicAsError(t *testing.T) {
 	// Regression: panics in work run on Draining's spawned goroutine,
-	// not on the goroutine where runnable.WithRecoverer's defer lives.
-	// Without internal recovery, a tick panic would crash the process.
-	// Draining must catch it and surface as an error.
+	// not on the goroutine where outer recover defers live. Without
+	// internal recovery, a tick panic would crash the process.
 	work := func(ctx context.Context) error {
 		panic("boom")
 	}
 
-	r := runnable.New(adapters.Draining(1*time.Second, work))
+	r := runnable.New(work, runnable.WithAdapters(adapters.Draining(1*time.Second)))
 	err := r.Run(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "boom", "panic value should be embedded in error")

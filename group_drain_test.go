@@ -23,7 +23,7 @@ func TestNewGroup_DrainEnabledChild(t *testing.T) {
 	drainObserved := make(chan struct{})
 	var ctxCancelObserved atomic.Bool
 
-	drainingChild := runnable.New(adapters.Draining(1*time.Second, func(ctx context.Context) error {
+	drainingChild := runnable.New(func(ctx context.Context) error {
 		close(started)
 		select {
 		case <-adapters.Stopping(ctx):
@@ -33,7 +33,7 @@ func TestNewGroup_DrainEnabledChild(t *testing.T) {
 			ctxCancelObserved.Store(true)
 			return ctx.Err()
 		}
-	}))
+	}, runnable.WithAdapters(adapters.Draining(1*time.Second)))
 
 	plainChild := runnable.New(func(ctx context.Context) error {
 		<-ctx.Done()
