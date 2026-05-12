@@ -45,9 +45,8 @@ r := runnable.New(func(ctx context.Context) error {
         select {
         case <-ctx.Done():
             return nil
-        default:
+        case <-time.After(time.Second):
         }
-        time.Sleep(1 * time.Second)
         fmt.Println("Running...")
     }
 })
@@ -71,7 +70,8 @@ if err != nil {
 ### Runnable Function with timeout
 ```go
 fmt.Println("Simple function with timeout...")
-ctxWithTimeout, _ := context.WithTimeout(context.Background(), 5*time.Second)
+ctxWithTimeout, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
 err = runnable.New(func(ctx context.Context) error {
     fmt.Println("Starting...")
     defer fmt.Println("Stopping...")
@@ -80,9 +80,8 @@ err = runnable.New(func(ctx context.Context) error {
         select {
         case <-ctx.Done():
             return nil
-        default:
+        case <-time.After(time.Second):
         }
-        time.Sleep(1 * time.Second)
         fmt.Println("Running...")
     }
 }).Run(ctxWithTimeout)
