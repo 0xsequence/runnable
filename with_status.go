@@ -130,7 +130,7 @@ func (w *withStatus) apply(r *runnable) {
 		}
 	}
 
-	r.publisher = appendPublisher(r.publisher, &statusPublisher{store: w.store, id: w.runnableID})
+	r.publisher = mergePublisher(r.publisher, &statusPublisher{store: w.store, id: w.runnableID})
 }
 
 // statusPublisher tags events with the runnable ID before routing them

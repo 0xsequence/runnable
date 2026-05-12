@@ -47,10 +47,10 @@ func WithPublisher(p Publisher) Option {
 }
 
 func (w *withPublisher) apply(r *runnable) {
-	r.publisher = appendPublisher(r.publisher, w.p)
+	r.publisher = mergePublisher(r.publisher, w.p)
 }
 
-func appendPublisher(existing, next Publisher) Publisher {
+func mergePublisher(existing, next Publisher) Publisher {
 	if next == nil {
 		return existing
 	}
