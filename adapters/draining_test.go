@@ -171,3 +171,19 @@ func TestDraining_WorkErrorPropagatesWithoutDrain(t *testing.T) {
 	err := r.Run(context.Background())
 	require.ErrorIs(t, err, sentinel)
 }
+
+func TestDraining_RecoversPanicAsError(t *testing.T) {
+	// Regression: panics in work run on Draining's spawned goroutine,
+	// not on the goroutine where runnable.WithRecoverer's defer lives.
+	// Without internal recovery, a tick panic would crash the process.
+	// Draining must catch it and surface as an error.
+	work := func(ctx context.Context) error {
+		panic("boom")
+	}
+
+	r := runnable.New(adapters.Draining(1*time.Second, work))
+	err := r.Run(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom", "panic value should be embedded in error")
+	assert.Contains(t, err.Error(), "panic in draining work", "error should identify itself as a recovered panic")
+}

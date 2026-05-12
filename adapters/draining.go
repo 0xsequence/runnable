@@ -3,6 +3,8 @@ package adapters
 import (
 	"context"
 	"errors"
+	"fmt"
+	"runtime/debug"
 	"time"
 )
 
@@ -24,6 +26,11 @@ func Stopping(ctx context.Context) <-chan struct{} {
 // Draining wraps work with graceful-shutdown semantics: when outerCtx
 // is cancelled, work has up to timeout to return via Stopping(workCtx)
 // before workCtx is force-cancelled and ErrDrainTimedOut is returned.
+//
+// Panics in work are recovered inside Draining's goroutine and returned
+// as an error containing the panic value and stack trace. They do NOT
+// propagate to runnable.WithRecoverer — recover only fires on the
+// goroutine where the deferred call lives, and work runs on its own.
 func Draining(timeout time.Duration, work func(context.Context) error) func(context.Context) error {
 	return func(outerCtx context.Context) error {
 		// Decoupled from outerCtx so outer cancellation triggers drain
@@ -35,7 +42,14 @@ func Draining(timeout time.Duration, work func(context.Context) error) func(cont
 		workCtx = context.WithValue(workCtx, stoppingKey{}, (<-chan struct{})(stopping))
 
 		done := make(chan error, 1)
-		go func() { done <- work(workCtx) }()
+		go func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					done <- fmt.Errorf("adapters: panic in draining work: %v\n%s", rec, debug.Stack())
+				}
+			}()
+			done <- work(workCtx)
+		}()
 
 		select {
 		case err := <-done:
