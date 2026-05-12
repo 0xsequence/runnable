@@ -10,7 +10,6 @@ type StatusMap map[string]Status
 
 type Status struct {
 	Running   bool       `json:"running"`
-	Restarts  int        `json:"restarts"`
 	StartTime time.Time  `json:"start_time"`
 	EndTime   *time.Time `json:"end_time,omitempty"`
 	LastError error      `json:"last_error"`
@@ -18,7 +17,6 @@ type Status struct {
 
 type StatusStore struct {
 	running   map[string]bool
-	restarts  map[string]int
 	startTime map[string]time.Time
 	endTime   map[string]time.Time
 	lastError map[string]error
@@ -29,7 +27,6 @@ type StatusStore struct {
 func NewStatusStore() *StatusStore {
 	return &StatusStore{
 		running:   make(map[string]bool),
-		restarts:  make(map[string]int),
 		startTime: make(map[string]time.Time),
 		endTime:   make(map[string]time.Time),
 		lastError: make(map[string]error),
@@ -44,10 +41,6 @@ func (s *StatusStore) Get() StatusMap {
 	for id, running := range s.running {
 		st := Status{
 			Running: running,
-		}
-
-		if restarts, ok := s.restarts[id]; ok {
-			st.Restarts = restarts
 		}
 
 		if startTime, ok := s.startTime[id]; ok {
@@ -99,15 +92,8 @@ func (w *withStatus) apply(r *runnable) {
 
 	r.onStart = func() {
 		w.store.mu.Lock()
-
 		w.store.running[w.runnableID] = true
 		w.store.startTime[w.runnableID] = time.Now()
-		if _, ok := w.store.restarts[w.runnableID]; !ok {
-			w.store.restarts[w.runnableID] = 0
-		} else {
-			w.store.restarts[w.runnableID]++
-		}
-
 		w.store.mu.Unlock()
 
 		if onStartRunnable != nil {

@@ -52,24 +52,4 @@ func TestWithStatus(t *testing.T) {
 		assert.Equal(t, false, s["test"].Running)
 		assert.Equal(t, assert.AnError, s["test"].LastError)
 	})
-
-	t.Run("with status, restart", func(t *testing.T) {
-		store := NewStatusStore()
-
-		counter := 0
-		r := New(func(ctx context.Context) error {
-			defer func() { counter++ }()
-			if counter < 1 {
-				return assert.AnError
-			}
-			return nil
-		}, WithStatus("test", store), WithRetry(3, ResetNever))
-
-		err := r.Run(context.Background())
-		require.NoError(t, err)
-
-		s := store.Get()
-		assert.Equal(t, false, s["test"].Running)
-		assert.Equal(t, 1, s["test"].Restarts)
-	})
 }

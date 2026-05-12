@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/0xsequence/runnable"
+	"github.com/0xsequence/runnable/adapters"
 )
 
 type Monitor struct {
@@ -123,7 +124,6 @@ func main() {
 			return fmt.Errorf("error")
 		}
 
-		// do something
 		for i := 0; i < 5; i++ {
 			select {
 			case <-ctx.Done():
@@ -134,7 +134,7 @@ func main() {
 			fmt.Println("Running...")
 		}
 		return nil
-	}, runnable.WithRetry(3, runnable.ResetNever)).Run(context.Background())
+	}, runnable.WithAdapters(adapters.Retry(3, adapters.ResetNever))).Run(context.Background())
 	if err != nil {
 		fmt.Println(err)
 	}
