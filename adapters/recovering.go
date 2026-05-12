@@ -8,19 +8,14 @@ import (
 	"github.com/0xsequence/runnable"
 )
 
-// PanicHandler is invoked when Recovering catches a panic, before the
-// adapter converts it into an error. It runs on the same goroutine as
-// next, so handlers must not block.
+// PanicHandler observes a panic caught by Recovering. Runs on next's
+// goroutine, so must not block.
 type PanicHandler func(ctx context.Context, rec any, stack []byte)
 
-// Recovering returns an Adapter that catches panics from next and
-// converts them into errors. handler is optional; pass nil to skip
-// reporting.
-//
-// Place Recovering inside Draining when both are in use: Draining
-// already recovers panics in its own goroutine as a safety net, but
-// Recovering inside lets the handler observe the panic before
-// Draining's generic recovery formats it.
+// Recovering returns an Adapter that converts panics from next into
+// errors and invokes handler (if non-nil). Place inside Draining when
+// both are used, so handler sees the panic before Draining's safety-net
+// recovery formats it.
 func Recovering(handler PanicHandler) runnable.Adapter {
 	return func(next runnable.RunFunc) runnable.RunFunc {
 		return func(ctx context.Context) (err error) {

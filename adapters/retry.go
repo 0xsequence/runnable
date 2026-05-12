@@ -8,18 +8,13 @@ import (
 	"github.com/0xsequence/runnable"
 )
 
-// ResetNever passed as resetAfter disables retry-budget reset based on
-// elapsed time between attempts.
+// ResetNever (as resetAfter) disables retry-budget reset.
 const ResetNever time.Duration = 0
 
 // Retry returns an Adapter that re-invokes next up to maxRetries times
-// when it returns a non-nil, non-context error. If resetAfter is
-// non-zero and at least that long has passed since the previous
-// attempt, the retry budget resets.
-//
-// Retry never observes Draining's Stopping signal — drain semantics
-// belong to Draining alone. Compose with Draining outside Retry if you
-// need both.
+// on non-context errors. If resetAfter > 0 and at least that long has
+// passed since the previous attempt, the budget resets. Retry does not
+// observe Stopping — wrap it inside Draining if you need both.
 func Retry(maxRetries int, resetAfter time.Duration) runnable.Adapter {
 	return func(next runnable.RunFunc) runnable.RunFunc {
 		return func(ctx context.Context) error {

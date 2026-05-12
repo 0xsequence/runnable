@@ -8,8 +8,8 @@ import (
 )
 
 // Ticker returns an Adapter that calls next once per interval until
-// ctx is cancelled or next returns an error. Composes with Draining:
-// an in-flight tick is allowed to finish before the loop exits.
+// ctx is cancelled or next errors. Composes with Draining: an in-flight
+// tick is allowed to finish before exit.
 func Ticker(interval time.Duration) runnable.Adapter {
 	return func(next runnable.RunFunc) runnable.RunFunc {
 		return func(ctx context.Context) error {

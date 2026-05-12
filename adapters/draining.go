@@ -17,25 +17,18 @@ var ErrDrainTimedOut = errors.New("adapters: drain timed out")
 type stoppingKey struct{}
 
 // Stopping returns a channel that closes when Draining begins shutdown,
-// or nil when ctx is not inside a Draining adapter. Always also select
-// on ctx.Done() — Stopping signals drain start; ctx.Done() fires only
-// when the drain timer expires.
+// or nil outside Draining. Select on this alongside ctx.Done() — ctx is
+// force-cancelled only after the drain timer expires.
 func Stopping(ctx context.Context) <-chan struct{} {
 	ch, _ := ctx.Value(stoppingKey{}).(<-chan struct{})
 	return ch
 }
 
-// Draining returns an Adapter that adds graceful-shutdown semantics:
-// when outerCtx is cancelled, next has up to timeout to return via
-// Stopping(workCtx) before workCtx is force-cancelled and
-// ErrDrainTimedOut is returned.
-//
-// Panics in next are recovered inside Draining's goroutine and returned
-// as an error containing the panic value and stack trace. They do NOT
-// propagate to outer recover handlers — recover only fires on the
-// goroutine where the deferred call lives, and next runs on its own.
-// Compose with Recovering inside Draining if you need a panic handler
-// callback.
+// Draining returns an Adapter that delays cancellation: when outerCtx
+// is cancelled, next has up to timeout to return via Stopping(workCtx)
+// before workCtx is force-cancelled and ErrDrainTimedOut is returned.
+// Panics in next are recovered into an error (they would otherwise
+// crash the process, since next runs on its own goroutine).
 func Draining(timeout time.Duration) runnable.Adapter {
 	return func(next runnable.RunFunc) runnable.RunFunc {
 		return func(outerCtx context.Context) error {
