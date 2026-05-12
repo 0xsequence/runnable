@@ -90,58 +90,38 @@ if err != nil {
 }
 ```
 
-### Runnable Function with retry
-```go
-fmt.Println("Simple function with retry...")
-errorReturned := false
-err = runnable.New(func(ctx context.Context) error {
-    fmt.Println("Starting...")
-    defer fmt.Println("Stopping...")
-    
-    if !errorReturned {
-        errorReturned = true
-        return fmt.Errorf("error")
-    }
-    
-    // do something
-    for i := 0; i < 5; i++ {
-        select {
-        case <-ctx.Done():
-            return nil
-        default:
-        }
-        time.Sleep(1 * time.Second)
-        fmt.Println("Running...")
-    }
-    return nil
-}, runnable.WithRetry(3, runnable.ResetNever)).Run(context.Background())
-if err != nil {
-    fmt.Println(err)
-}
-```
-
 ### Adapters
 
 Cross-cutting behaviors that aren't part of the core lifecycle live in
-the `runnable/adapters` subpackage as runFunc wrappers. They compose by
-nesting.
-
-**Ticker** — periodic execution:
+the `runnable/adapters` subpackage as chi-style middleware: each
+`runnable.Adapter` has the shape `func(next RunFunc) RunFunc`. Apply
+them with `runnable.WithAdapters` (left-to-right = outermost-to-innermost):
 
 ```go
-r := runnable.New(adapters.Ticker(30*time.Second, reconcile))
+r := runnable.New(reconcile, runnable.WithAdapters(
+    adapters.Draining(10*time.Second),
+    adapters.Recovering(reportPanic),
+    adapters.Retry(3, time.Minute),
+    adapters.Ticker(30*time.Second),
+))
 ```
 
 **Draining** — graceful shutdown with a grace window. When the outer
-ctx is cancelled, work has `timeout` to return via `adapters.Stopping(ctx)`
-before its ctx is force-cancelled and `adapters.ErrDrainTimedOut` is
-returned.
+ctx is cancelled, the wrapped work has `timeout` to return via
+`adapters.Stopping(ctx)` before its ctx is force-cancelled and
+`adapters.ErrDrainTimedOut` is returned.
 
-```go
-r := runnable.New(adapters.Draining(10*time.Second,
-    adapters.Ticker(30*time.Second, reconcile),
-))
-```
+**Ticker** — calls the wrapped work once per interval until ctx is
+cancelled or the work returns an error. Composes with Draining: an
+in-flight tick is allowed to finish before the loop exits.
+
+**Recovering** — turns panics in the wrapped work into errors and
+invokes the optional handler before returning. Place inside Draining
+when both are in use.
+
+**Retry** — re-invokes the wrapped work up to `maxRetries` times on
+non-context errors. If `resetAfter` is non-zero and at least that long
+has passed since the previous attempt, the retry budget resets.
 
 Inside long-running work, always select on both `ctx.Done()` and
 `adapters.Stopping(ctx)` — `Stopping` signals drain start, `ctx.Done()`
@@ -152,26 +132,38 @@ A full SIGTERM-safe service shape lives in
 
 ### Migrating from v0.1 to v0.2
 
-v0.2 moves drain and ticker out of the core package. The Option-based
-`WithDrain` and the `NewTicker` constructor are removed; their
-replacements live at `runnable/adapters`.
+v0.2 moves drain, ticker, retry, and panic recovery out of the core
+package. `WithDrain`, `NewTicker`, `WithRetry`, and `WithRecoverer`
+are removed; their replacements live at `runnable/adapters` as
+chi-style middleware.
 
 Before (v0.1):
 
     r := runnable.NewTicker(30*time.Second, doWork,
         runnable.WithDrain(10*time.Second),
+        runnable.WithRecoverer(reporter, nil),
+        runnable.WithRetry(3, time.Minute),
     )
 
 After (v0.2):
 
-    r := runnable.New(adapters.Draining(10*time.Second,
-        adapters.Ticker(30*time.Second, doWork),
+    r := runnable.New(doWork, runnable.WithAdapters(
+        adapters.Draining(10*time.Second),
+        adapters.Recovering(handler),
+        adapters.Retry(3, time.Minute),
+        adapters.Ticker(30*time.Second),
     ))
 
 Symbol mapping:
 
-- `runnable.WithDrain` → use `adapters.Draining` as a runFunc wrapper.
-- `runnable.NewTicker` → `adapters.Ticker` wrapped by `runnable.New`.
+- `runnable.WithDrain` → `adapters.Draining` under `runnable.WithAdapters`.
+- `runnable.NewTicker` → `adapters.Ticker` under `runnable.WithAdapters`
+  (no longer takes the work argument; pass work to `runnable.New`).
+- `runnable.WithRetry` / `runnable.ResetNever` → `adapters.Retry` /
+  `adapters.ResetNever`.
+- `runnable.WithRecoverer` → `adapters.Recovering` with a single
+  `PanicHandler` callback (the two-interface `RecoveryReporter` /
+  `StackPrinter` split is gone).
 - `runnable.Stopping` → `adapters.Stopping`.
 - `runnable.ErrDrainTimedOut` → `adapters.ErrDrainTimedOut`.
 
@@ -181,6 +173,11 @@ force-cancel mid-drain. In v0.2, `Stop`'s ctx only governs how long
 the caller waits for `Stop` to return; the drain runs on its own
 fixed-duration timer regardless. If you need a shorter drain budget,
 configure `Draining` with the shorter duration.
+
+**Status.Restarts removed.** The `Restarts` field on `Status` counted
+`WithRetry` re-entries via the deprecated `onStart` coupling; with
+retry moved into adapters it had no clean way to surface. Pending a
+proper event/observer hook in a later release.
 
 **NewGroup interaction:** drain-enabled children of `NewGroup` now
 drain when the group is stopped (v0.1 silently bypassed the child's
