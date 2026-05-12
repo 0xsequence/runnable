@@ -52,4 +52,24 @@ func TestWithStatus(t *testing.T) {
 		assert.Equal(t, false, s["test"].Running)
 		assert.Equal(t, assert.AnError, s["test"].LastError)
 	})
+
+	t.Run("with status, restarts counted via RetryEvent", func(t *testing.T) {
+		// adapters.Retry publishes RetryEvent; WithStatus subscribes via a
+		// statusPublisher tagged with the runnable id. Restarts in the
+		// resulting Status is the count of those events. We exercise the
+		// publish path directly without importing adapters (cycle).
+		store := NewStatusStore()
+		r := New(func(ctx context.Context) error {
+			p := PublisherFrom(ctx)
+			require.NotNil(t, p, "WithStatus must install a Publisher on runCtx")
+			p.Publish(RetryEvent{Attempt: 1, Err: assert.AnError})
+			p.Publish(RetryEvent{Attempt: 2, Err: assert.AnError})
+			return nil
+		}, WithStatus("test", store))
+
+		require.NoError(t, r.Run(context.Background()))
+
+		s := store.Get()
+		assert.Equal(t, 2, s["test"].Restarts)
+	})
 }
