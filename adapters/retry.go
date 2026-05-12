@@ -13,8 +13,9 @@ const ResetNever time.Duration = 0
 
 // Retry returns an Adapter that re-invokes next up to maxRetries times
 // on non-context errors. If resetAfter > 0 and at least that long has
-// passed since the previous attempt, the budget resets. Retry does not
-// observe Stopping — wrap it inside Draining if you need both.
+// passed since the previous attempt, the budget resets. Each failed
+// attempt publishes a runnable.RetryEvent (Attempt is 1-indexed). Retry
+// does not observe Stopping — wrap it inside Draining if you need both.
 func Retry(maxRetries int, resetAfter time.Duration) runnable.Adapter {
 	return func(next runnable.RunFunc) runnable.RunFunc {
 		return func(ctx context.Context) error {
@@ -35,6 +36,7 @@ func Retry(maxRetries int, resetAfter time.Duration) runnable.Adapter {
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					return err
 				}
+				runnable.Publish(ctx, runnable.RetryEvent{Attempt: i + 1, Err: err})
 			}
 			return err
 		}

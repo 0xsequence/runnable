@@ -1,8 +1,9 @@
 // Example: a periodic reconciler that drains gracefully on SIGTERM.
 //
 // Shape: runnable.WithAdapters composing Draining + Recovering + Ticker,
-// driven by signal.NotifyContext. Copy-paste into a service's
-// cmd/.../main.go and replace the reconcile body with your work.
+// driven by signal.NotifyContext. A Publisher subscribes to adapter
+// events. Copy-paste into a service's cmd/.../main.go and replace the
+// reconcile body with your work.
 package main
 
 import (
@@ -28,8 +29,21 @@ func reconcile(ctx context.Context) error {
 	return nil
 }
 
-func panicHandler(_ context.Context, rec any, stack []byte) {
-	fmt.Fprintf(os.Stderr, "tick panic: %v\n%s", rec, stack)
+// logPublisher prints each adapter event. In a real service this would
+// push to a metrics or structured-logging sink.
+type logPublisher struct{}
+
+func (logPublisher) Publish(event any) {
+	switch ev := event.(type) {
+	case runnable.PanicRecoveredEvent:
+		fmt.Fprintf(os.Stderr, "tick panic: %v\n%s", ev.Recovered, ev.Stack)
+	case runnable.DrainStartedEvent:
+		fmt.Printf("drain: started, %s grace window\n", ev.Timeout)
+	case runnable.DrainTimedOutEvent:
+		fmt.Println("drain: timed out, force-cancelled")
+	case runnable.RetryEvent:
+		fmt.Printf("retry: attempt %d failed: %v\n", ev.Attempt, ev.Err)
+	}
 }
 
 func main() {
@@ -38,13 +52,16 @@ func main() {
 
 	// Adapters compose left-to-right (first listed = outermost). Draining
 	// catches outer ctx cancellation and turns it into drain rather than
-	// abort. Recovering sits inside Draining so the handler observes
-	// panics before Draining's safety-net recovery formats them.
-	rc := runnable.New(reconcile, runnable.WithAdapters(
-		adapters.Draining(10*time.Second),
-		adapters.Recovering(panicHandler),
-		adapters.Ticker(2*time.Second),
-	))
+	// abort. Recovering sits inside Draining so the Publisher observes
+	// the panic before Draining's safety-net recovery formats it.
+	rc := runnable.New(reconcile,
+		runnable.WithPublisher(logPublisher{}),
+		runnable.WithAdapters(
+			adapters.Draining(10*time.Second),
+			adapters.Recovering(),
+			adapters.Ticker(2*time.Second),
+		),
+	)
 
 	runErr := make(chan error, 1)
 	go func() {

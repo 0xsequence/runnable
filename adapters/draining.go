@@ -54,6 +54,7 @@ func Draining(timeout time.Duration) runnable.Adapter {
 			case err := <-done:
 				return err
 			case <-outerCtx.Done():
+				runnable.Publish(outerCtx, runnable.DrainStartedEvent{Timeout: timeout})
 				close(stopping)
 			}
 
@@ -65,6 +66,7 @@ func Draining(timeout time.Duration) runnable.Adapter {
 			case <-timer.C:
 				cancelWork()
 				<-done
+				runnable.Publish(outerCtx, runnable.DrainTimedOutEvent{})
 				return ErrDrainTimedOut
 			}
 		}
