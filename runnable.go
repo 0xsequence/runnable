@@ -132,11 +132,14 @@ func (r *runnable) Stop(ctx context.Context) error {
 		r.mu.Unlock()
 		return ErrNotRunning
 	}
-
 	runStop := r.runStop
+	// Snapshot runCancel under the lock — Run overwrites this field
+	// on each cycle, so reading it without synchronization races with
+	// a concurrent or subsequent Run.
+	runCancel := r.runCancel
 	r.mu.Unlock()
 
-	r.runCancel()
+	runCancel()
 
 	select {
 	case <-ctx.Done():

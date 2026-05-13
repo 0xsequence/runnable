@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/0xsequence/runnable"
+	"github.com/0xsequence/runnable/adapters"
 )
 
 type Monitor struct {
@@ -33,7 +34,6 @@ func (m *Monitor) run(ctx context.Context) error {
 		time.Sleep(1 * time.Second)
 		fmt.Println("Monitoring...")
 	}
-	return nil
 }
 
 func main() {
@@ -92,7 +92,8 @@ func main() {
 
 	// simple function with timeout
 	fmt.Println("Simple function with timeout...")
-	ctxWithTimeout, _ := context.WithTimeout(context.Background(), 5*time.Second)
+	ctxWithTimeout, cancelTimeout := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelTimeout()
 	err = runnable.New(func(ctx context.Context) error {
 		fmt.Println("Starting...")
 		defer fmt.Println("Stopping...")
@@ -123,7 +124,6 @@ func main() {
 			return fmt.Errorf("error")
 		}
 
-		// do something
 		for i := 0; i < 5; i++ {
 			select {
 			case <-ctx.Done():
@@ -134,7 +134,7 @@ func main() {
 			fmt.Println("Running...")
 		}
 		return nil
-	}, runnable.WithRetry(3, runnable.ResetNever)).Run(context.Background())
+	}, runnable.WithAdapters(adapters.Retry(3, adapters.ResetNever))).Run(context.Background())
 	if err != nil {
 		fmt.Println(err)
 	}

@@ -48,9 +48,7 @@ func TestNewGroup(t *testing.T) {
 		// Create a new group
 		group := NewGroup(
 			New(func(ctx context.Context) error {
-				select {
-				case <-ctx.Done():
-				}
+				<-ctx.Done()
 				return nil
 			}),
 			New(func(ctx context.Context) error {

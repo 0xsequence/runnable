@@ -43,11 +43,8 @@ func TestRunnable(t *testing.T) {
 		r := New(func(ctx context.Context) error {
 			started <- struct{}{}
 			time.Sleep(2 * time.Second)
-
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+			<-ctx.Done()
+			return ctx.Err()
 		})
 
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -86,13 +83,13 @@ func TestRunnable(t *testing.T) {
 
 		r := New(func(ctx context.Context) error {
 			started <- struct{}{}
+			<-ctx.Done()
 			time.Sleep(2 * time.Second)
-			return nil
+			return ctx.Err()
 		})
 
 		go func() {
-			err := r.Run(context.Background())
-			require.NoError(t, err)
+			_ = r.Run(context.Background())
 		}()
 
 		<-started
@@ -101,7 +98,7 @@ func TestRunnable(t *testing.T) {
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer stopCancel()
 		err := r.Stop(stopCtx)
-		require.Error(t, err, context.DeadlineExceeded)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
 		assert.Equal(t, true, r.IsRunning())
 	})
 }
