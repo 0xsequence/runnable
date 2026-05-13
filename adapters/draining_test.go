@@ -172,6 +172,61 @@ func TestDraining_WorkErrorPropagatesWithoutDrain(t *testing.T) {
 	require.ErrorIs(t, err, sentinel)
 }
 
+func TestDraining_PublishesDrainStarted(t *testing.T) {
+	pub := &capturingPublisher{}
+	started := make(chan struct{})
+
+	work := func(ctx context.Context) error {
+		close(started)
+		<-adapters.Stopping(ctx)
+		return nil
+	}
+
+	r := runnable.New(work,
+		runnable.WithPublisher(pub),
+		runnable.WithAdapters(adapters.Draining(1*time.Second)),
+	)
+	go func() { _ = r.Run(context.Background()) }()
+
+	<-started
+	require.NoError(t, r.Stop(context.Background()))
+
+	events := pub.snapshot()
+	require.Len(t, events, 1)
+	ev, ok := events[0].(runnable.DrainStartedEvent)
+	require.True(t, ok, "expected DrainStartedEvent, got %T", events[0])
+	assert.Equal(t, time.Second, ev.Timeout)
+}
+
+func TestDraining_PublishesDrainTimedOut(t *testing.T) {
+	pub := &capturingPublisher{}
+	started := make(chan struct{})
+
+	work := func(ctx context.Context) error {
+		close(started)
+		<-ctx.Done() // ignore Stopping; force the timer to fire
+		return ctx.Err()
+	}
+
+	r := runnable.New(work,
+		runnable.WithPublisher(pub),
+		runnable.WithAdapters(adapters.Draining(50*time.Millisecond)),
+	)
+	runErr := make(chan error, 1)
+	go func() { runErr <- r.Run(context.Background()) }()
+
+	<-started
+	require.NoError(t, r.Stop(context.Background()))
+	require.ErrorIs(t, <-runErr, adapters.ErrDrainTimedOut)
+
+	events := pub.snapshot()
+	require.Len(t, events, 2)
+	_, ok := events[0].(runnable.DrainStartedEvent)
+	require.True(t, ok, "first event should be DrainStartedEvent, got %T", events[0])
+	_, ok = events[1].(runnable.DrainTimedOutEvent)
+	require.True(t, ok, "second event should be DrainTimedOutEvent, got %T", events[1])
+}
+
 func TestDraining_RecoversPanicAsError(t *testing.T) {
 	// Regression: panics in work run on Draining's spawned goroutine,
 	// not on the goroutine where outer recover defers live. Without

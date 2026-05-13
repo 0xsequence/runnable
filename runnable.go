@@ -31,6 +31,7 @@ type runnable struct {
 	isRunning bool
 	onStart   func()
 	onStop    func()
+	publisher Publisher
 
 	mu sync.Mutex
 }
@@ -89,6 +90,9 @@ func (r *runnable) Run(ctx context.Context) error {
 
 	r.isRunning = true
 	r.runCtx, r.runCancel = context.WithCancel(ctx)
+	if r.publisher != nil {
+		r.runCtx = context.WithValue(r.runCtx, publisherKey{}, r.publisher)
+	}
 	r.runStop = make(chan bool)
 
 	runCtx := r.runCtx

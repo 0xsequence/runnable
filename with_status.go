@@ -10,6 +10,7 @@ type StatusMap map[string]Status
 
 type Status struct {
 	Running   bool       `json:"running"`
+	Restarts  int        `json:"restarts"`
 	StartTime time.Time  `json:"start_time"`
 	EndTime   *time.Time `json:"end_time,omitempty"`
 	LastError error      `json:"last_error"`
@@ -17,6 +18,7 @@ type Status struct {
 
 type StatusStore struct {
 	running   map[string]bool
+	restarts  map[string]int
 	startTime map[string]time.Time
 	endTime   map[string]time.Time
 	lastError map[string]error
@@ -27,6 +29,7 @@ type StatusStore struct {
 func NewStatusStore() *StatusStore {
 	return &StatusStore{
 		running:   make(map[string]bool),
+		restarts:  make(map[string]int),
 		startTime: make(map[string]time.Time),
 		endTime:   make(map[string]time.Time),
 		lastError: make(map[string]error),
@@ -41,6 +44,10 @@ func (s *StatusStore) Get() StatusMap {
 	for id, running := range s.running {
 		st := Status{
 			Running: running,
+		}
+
+		if restarts, ok := s.restarts[id]; ok {
+			st.Restarts = restarts
 		}
 
 		if startTime, ok := s.startTime[id]; ok {
@@ -60,6 +67,17 @@ func (s *StatusStore) Get() StatusMap {
 	}
 
 	return sm
+}
+
+// publish dispatches an adapter event into the per-id slot in the store.
+// Lifecycle state (Running, StartTime, etc.) is set by withStatus's
+// onStart/onStop hooks, not here.
+func (s *StatusStore) publish(id string, event any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := event.(RetryEvent); ok {
+		s.restarts[id]++
+	}
 }
 
 type withStatus struct {
@@ -111,6 +129,19 @@ func (w *withStatus) apply(r *runnable) {
 			onStopRunnable()
 		}
 	}
+
+	r.publisher = mergePublisher(r.publisher, &statusPublisher{store: w.store, id: w.runnableID})
+}
+
+// statusPublisher tags events with the runnable ID before routing them
+// into the shared StatusStore.
+type statusPublisher struct {
+	store *StatusStore
+	id    string
+}
+
+func (p *statusPublisher) Publish(event any) {
+	p.store.publish(p.id, event)
 }
 
 func WithStatus(id string, store *StatusStore) Option {

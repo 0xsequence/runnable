@@ -100,7 +100,7 @@ them with `runnable.WithAdapters` (left-to-right = outermost-to-innermost):
 ```go
 r := runnable.New(reconcile, runnable.WithAdapters(
     adapters.Draining(10*time.Second),
-    adapters.Recovering(reportPanic),
+    adapters.Recovering(),
     adapters.Retry(3, time.Minute),
     adapters.Ticker(30*time.Second),
 ))
@@ -116,12 +116,13 @@ cancelled or the work returns an error. Composes with Draining: an
 in-flight tick is allowed to finish before the loop exits.
 
 **Recovering** — turns panics in the wrapped work into errors and
-invokes the optional handler before returning. Place inside Draining
-when both are in use.
+emits a `runnable.PanicRecoveredEvent` to the Publisher on ctx. Place
+inside Draining when both are in use.
 
 **Retry** — re-invokes the wrapped work up to `maxRetries` times on
 non-context errors. If `resetAfter` is non-zero and at least that long
-has passed since the previous attempt, the retry budget resets.
+has passed since the previous attempt, the retry budget resets. Emits
+a `runnable.RetryEvent` after each failed attempt.
 
 Inside long-running work, always select on both `ctx.Done()` and
 `adapters.Stopping(ctx)` — `Stopping` signals drain start, `ctx.Done()`
@@ -129,6 +130,38 @@ fires only when the drain timer expires.
 
 A full SIGTERM-safe service shape lives in
 [`examples/ticker-with-drain`](examples/ticker-with-drain/main.go).
+
+### Observability via Publisher
+
+Adapters emit typed events to a `runnable.Publisher` installed on the
+runnable's ctx. Use `runnable.WithPublisher` to register one (or many —
+multiple `WithPublisher` calls fan out):
+
+```go
+type log struct{}
+
+func (log) Publish(event any) {
+    switch ev := event.(type) {
+    case runnable.RetryEvent:
+        fmt.Printf("retry attempt %d: %v\n", ev.Attempt, ev.Err)
+    case runnable.DrainStartedEvent:
+        fmt.Printf("drain started, %s window\n", ev.Timeout)
+    case runnable.PanicRecoveredEvent:
+        fmt.Fprintf(os.Stderr, "panic: %v\n%s", ev.Recovered, ev.Stack)
+    }
+}
+
+r := runnable.New(work,
+    runnable.WithPublisher(log{}),
+    runnable.WithAdapters(adapters.Retry(3, time.Minute), adapters.Recovering()),
+)
+```
+
+`StatusStore` is a Publisher too — `WithStatus(id, store)` wires it
+automatically and counts `RetryEvent`s into `Status.Restarts`.
+
+`Publisher.Publish` runs on the caller's goroutine, so subscribers must
+not block. Buffer internally if you need async dispatch.
 
 ### Migrating from v0.1 to v0.2
 
@@ -149,7 +182,7 @@ After (v0.2):
 
     r := runnable.New(doWork, runnable.WithAdapters(
         adapters.Draining(10*time.Second),
-        adapters.Recovering(handler),
+        adapters.Recovering(),
         adapters.Retry(3, time.Minute),
         adapters.Ticker(30*time.Second),
     ))
@@ -161,9 +194,10 @@ Symbol mapping:
   (no longer takes the work argument; pass work to `runnable.New`).
 - `runnable.WithRetry` / `runnable.ResetNever` → `adapters.Retry` /
   `adapters.ResetNever`.
-- `runnable.WithRecoverer` → `adapters.Recovering` with a single
-  `PanicHandler` callback (the two-interface `RecoveryReporter` /
-  `StackPrinter` split is gone).
+- `runnable.WithRecoverer` → `adapters.Recovering()` plus a
+  `runnable.WithPublisher` subscriber listening for
+  `runnable.PanicRecoveredEvent` (the two-interface `RecoveryReporter` /
+  `StackPrinter` callback split is gone).
 - `runnable.Stopping` → `adapters.Stopping`.
 - `runnable.ErrDrainTimedOut` → `adapters.ErrDrainTimedOut`.
 
@@ -174,10 +208,11 @@ the caller waits for `Stop` to return; the drain runs on its own
 fixed-duration timer regardless. If you need a shorter drain budget,
 configure `Draining` with the shorter duration.
 
-**Status.Restarts removed.** The `Restarts` field on `Status` counted
-`WithRetry` re-entries via the deprecated `onStart` coupling; with
-retry moved into adapters it had no clean way to surface. Pending a
-proper event/observer hook in a later release.
+**Status.Restarts is event-driven.** The `Restarts` field on `Status`
+is still present, but it now counts `runnable.RetryEvent`s published
+by `adapters.Retry` (or any other Publisher source) rather than
+being incremented by an `onStart` side-channel from `WithRetry`. No
+call-site change required when using `WithStatus` + `adapters.Retry`.
 
 **NewGroup interaction:** drain-enabled children of `NewGroup` now
 drain when the group is stopped (v0.1 silently bypassed the child's
