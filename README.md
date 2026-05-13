@@ -163,61 +163,48 @@ automatically and counts `RetryEvent`s into `Status.Restarts`.
 `Publisher.Publish` runs on the caller's goroutine, so subscribers must
 not block. Buffer internally if you need async dispatch.
 
-### Migrating from v0.1 to v0.2
+### Migrating from v0.0.x to v0.1.0
 
-v0.2 moves drain, ticker, retry, and panic recovery out of the core
-package. `WithDrain`, `NewTicker`, `WithRetry`, and `WithRecoverer`
-are removed; their replacements live at `runnable/adapters` as
-chi-style middleware.
+v0.1.0 moves retry and panic recovery out of the core package, and
+introduces drain-on-shutdown and periodic execution as new adapters.
+The Option-based `WithRetry` and `WithRecoverer` are removed; their
+replacements live at `runnable/adapters` as chi-style middleware
+applied via `runnable.WithAdapters`.
 
-Before (v0.1):
+Before (v0.0.x):
 
-    r := runnable.NewTicker(30*time.Second, doWork,
-        runnable.WithDrain(10*time.Second),
+    r := runnable.New(doWork,
         runnable.WithRecoverer(reporter, nil),
         runnable.WithRetry(3, time.Minute),
     )
 
-After (v0.2):
+After (v0.1.0):
 
     r := runnable.New(doWork, runnable.WithAdapters(
-        adapters.Draining(10*time.Second),
         adapters.Recovering(),
         adapters.Retry(3, time.Minute),
-        adapters.Ticker(30*time.Second),
     ))
 
 Symbol mapping:
 
-- `runnable.WithDrain` → `adapters.Draining` under `runnable.WithAdapters`.
-- `runnable.NewTicker` → `adapters.Ticker` under `runnable.WithAdapters`
-  (no longer takes the work argument; pass work to `runnable.New`).
 - `runnable.WithRetry` / `runnable.ResetNever` → `adapters.Retry` /
   `adapters.ResetNever`.
 - `runnable.WithRecoverer` → `adapters.Recovering()` plus a
   `runnable.WithPublisher` subscriber listening for
   `runnable.PanicRecoveredEvent` (the two-interface `RecoveryReporter` /
   `StackPrinter` callback split is gone).
-- `runnable.Stopping` → `adapters.Stopping`.
-- `runnable.ErrDrainTimedOut` → `adapters.ErrDrainTimedOut`.
-
-**Behavioral change:** `Stop(ctx)`'s ctx no longer shortens the drain
-window. In v0.1, a caller ctx shorter than `WithDrain`'s timeout would
-force-cancel mid-drain. In v0.2, `Stop`'s ctx only governs how long
-the caller waits for `Stop` to return; the drain runs on its own
-fixed-duration timer regardless. If you need a shorter drain budget,
-configure `Draining` with the shorter duration.
 
 **Status.Restarts is event-driven.** The `Restarts` field on `Status`
-is still present, but it now counts `runnable.RetryEvent`s published
-by `adapters.Retry` (or any other Publisher source) rather than
-being incremented by an `onStart` side-channel from `WithRetry`. No
-call-site change required when using `WithStatus` + `adapters.Retry`.
+is unchanged from a caller's perspective, but it now counts
+`runnable.RetryEvent`s published by `adapters.Retry` (or any other
+Publisher source) rather than being incremented by an `onStart`
+side-channel from `WithRetry`. No call-site change required when
+using `WithStatus` + `adapters.Retry`.
 
-**NewGroup interaction:** drain-enabled children of `NewGroup` now
-drain when the group is stopped (v0.1 silently bypassed the child's
-drain). No code change required at call sites — the adapter design
-fixes this by construction.
+**New in v0.1.0:** `adapters.Draining` for graceful shutdown,
+`adapters.Ticker` for periodic execution, `adapters.Stopping(ctx)` to
+observe drain start, `adapters.ErrDrainTimedOut`. See the Adapters
+section above.
 
 ### Runnable Object
 ```go
